@@ -71,7 +71,6 @@ function validate(table, d, exclrow)
 	local i,n,f,k,v
 	local rc = {}
 
-
 	-- first we validate each field
 	for k,v in pairs(d) do
 		f = tabledef[table].fields[k]
@@ -98,7 +97,11 @@ function validate(table, d, exclrow)
 	for n,f in pairs(tabledef[table].fields) do
 		if(f.required and not d[n]) then 
 			if(f.default) then
-				d[n] = f.default
+				if(type(f.default) == "function") then
+					d[n] = f.default(table, n)
+				else
+					d[n] = f.default
+				end
 			else
 				rc[n] = "required"
 			end
@@ -107,6 +110,9 @@ function validate(table, d, exclrow)
 			for i,v in ipairs(T[table]) do
 				if(i ~= exclrow and v[n] == d[n]) then print("match") rc[n] = "not unique" break end
 			end
+		end
+		if(d[n]) then
+			print("Validated "..n.." = "..tostring(d[n]))
 		end
 	end
 
@@ -159,6 +165,30 @@ function set(table, row, d)
 	print("VALIDATION WAS OK FOR SET")
 end
 
+--
+-- Standard routine to generate an automatic name based on "gn" field
+-- if it doesn't exist then we use table name
+--
+function gen_name(table, field)
+	local f = tabledef[table].fields[field]
+	local gn = f.gn
+	local i = 0
+	local k,v,regex,m
+	
+	if(not gn) then gn = table end
+
+	regex="^"..gn.."(%d+)$"
+
+	for k,v in ipairs(T[table]) do
+		m = string.match(v[field], regex)
+		if(m) then
+			m = tonumber(m)
+			if(m > i) then i = m end
+		end
+	end	
+	return(gn..(i+1))
+end
+
 
 --
 -- This is the validator that checks the overall record, so we can build logic
@@ -192,6 +222,17 @@ init_table("hosts",{
 	}
 })
 
+
+init_table("domainsets",{
+	type="list",
+	key="name",
+	fields={
+		["name"] = { type="name", required=true, unique=true, default=gen_name, gn="ds" },
+		["ipset"] = { type="ipset" },
+		["domains"] = { type="domain", list=true }
+	}
+})
+
 init_table("config/dns", {
 	type="config",
 	fields={
@@ -204,6 +245,28 @@ init_table("config/dns", {
 	}
 })
 
+
+
+rc = validate("domainsets", {} )
+
+--[[
+
+table_init(name)
+table_validate_add(name, new_entry)
+table_validate_set(name, new_values)
+table_add
+table_set
+table_get
+table_setvalid(name, row, true/false)
+
+
+
+config_init(name)
+config_validate(name, new_values)
+config_set
+config_get
+
+]]--
 
 print(tostring(tabledef["hosts"].fields));
 

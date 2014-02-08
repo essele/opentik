@@ -2,10 +2,10 @@
 MOSDIR_I="/home/essele/dev/mosquitto/mosquitto-1.2.3/lib"
 MOSDIR_L="/home/essele/dev/mosquitto/mosquitto-1.2.3/lib"
 
-LDFLAGS=-L$(MOSDIR_L) -lmosquitto -lpthread -lrt
+LDFLAGS=-L$(MOSDIR_L) -lmosquitto -lpthread -lrt -lnl
 CFLAGS=-I$(MOSDIR_I)
 
-OBJS=unit.o serialize.o filewatch.o
+OBJS=unit.o serialize.o filewatch.o 
 LIB=unit.so
 
 DEPS=serialize.h filewatch.h luafuncs.h
@@ -21,3 +21,5 @@ $(LIB):	$(OBJS)
 clean:
 	rm $(LIB) $(OBJS)
 
+lee: netlink.c
+	gcc -o lee -Wall -Werror netlink.c -lnl
