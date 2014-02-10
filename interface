@@ -92,10 +92,21 @@ function Interface:apply()
 
 	if(not wasvalid and isvalid) then
 		print("NEW INTERFACE GOING LIVE")
+		-- TODO: for configurable interfaces we need to create them
+		--       for fixed we will just wait for the match
+		--       how do we check parameters?
 	elseif(wasvalid and isvalid) then
 		print("VALID CONFIG CHANGE")
+		-- TODO: if something changed then we should adjust the
+		--       interface
+	elseif(wasvalid and not isvalid) then
+		print("CONFIG CHANGED TO INVALID")
+		-- TODO: we had a good config, now we don't have
+		--       we may need to remove the physical interface
+		--       or take it down
 	else
 		print("STILL INVALID")
+		-- TODO: was invalid, still is ... do nothing
 	end
 	
 	return isvalid

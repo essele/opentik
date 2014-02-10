@@ -23,8 +23,8 @@ require("lua.Validators")
 LIST = {}			-- all the lists
 DEF = {}			-- the field definitions
 LCFG = {}			-- list configs (keys etc)
-ListItem = {}
-List = {}
+ListItem = {}		-- ListItem class
+List = {}			-- List functions
 
 --
 -- We need to be able to create the base lists and set specific
@@ -49,7 +49,7 @@ function List.findItem(listname, fieldname, value)
 end
 
 --
--- The base List constructor is very simple, we just create an object
+-- The base ListItem constructor is very simple, we just create an object
 -- and set the metatable for object-like behaviours, this will generally
 -- be overridden by sub-classes
 --
@@ -166,7 +166,7 @@ end
 
 --
 -- The apply function would validate any config-wide requirements and
--- then move the config to the live state ... any complex work should
+-- then move the scratch to valid config ... any complex work should
 -- be done by the child, we simply move the config here (i.e. it can't fail)
 --
 -- We do check for all required fields here and will set the "valid" field
