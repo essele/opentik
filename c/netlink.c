@@ -26,8 +26,8 @@
 static struct nl_cache_mngr	*mngr;
 static struct nl_cache		*cache_link;
 static struct nl_cache		*cache_addr;
-static int					fid_link;
-static int					fid_addr;
+static int					fid_link_add, fid_link_mod, fid_link_del;
+static int					fid_addr_add, fid_addr_mod, fid_addr_del;
 
 /*
  * For some reason these aren't defined???
@@ -61,14 +61,17 @@ void create_flags_hash(lua_State *L, unsigned int flags) {
 }
 
 /**
- * Call the callback function for links with link change details
+ * Call the callback function for items with change details
  * @arg L			Lua state
- * @arg 
+ * @arg fid			function id to call
+ * @arg index		the relevant index (if index for both types)
+ * @arg name		the thing we are notifying (interface or address)
+ * @arg action		is it "add", "change" or "delete"
  */
-void callback_lua_link(lua_State *L, int index, char *name, char *action) {
-    get_function(L, fid_link);
+void callback_lua_nl(lua_State *L, int fid, int index, char *name, char *action) {
+    get_function(L, fid);
     if(!lua_isfunction(L, -1)) {
-        fprintf(stderr, "callback_lua_link: invalid function for callback\n");
+        fprintf(stderr, "callback_lua_nl: invalid function for callback\n");
         return;
     }
 	lua_pushnumber(L, index);
@@ -123,7 +126,7 @@ static void add_link_to_lua(lua_State *L, struct rtnl_link *link) {
 }
 
 /**
- * Simple address print routine
+ * Simple address print routine to convert addresses into text
  */
 static char *addr2str(struct nl_addr *addr, char *buf, size_t size) {
 	void	*bin;
@@ -205,14 +208,16 @@ void	cb_link_dynamic(struct nl_cache *cache, struct nl_object *obj, int action, 
 
 	switch(action) {
 		case NL_ACT_NEW:
+			add_link_to_lua(L, link);
+			callback_lua_nl(L, fid_link_add, index, rtnl_link_get_name(link), "add");
+			break;
 		case NL_ACT_CHANGE:
 			add_link_to_lua(L, link);
-			callback_lua_link(L, index, rtnl_link_get_name(link), 
-										(action==NL_ACT_NEW ? "add" : "change"));
+			callback_lua_nl(L, fid_link_mod, index, rtnl_link_get_name(link), "change");
 			break;
 		case NL_ACT_DEL:
 			remove_link_from_lua(L, link);
-			callback_lua_link(L, index, rtnl_link_get_name(link), "delete");
+			callback_lua_nl(L, fid_link_del, index, rtnl_link_get_name(link), "delete");
 			break;
 	}
 }
@@ -228,7 +233,7 @@ void	cb_link_initial(struct nl_object *obj, void *arg) {
 	int					index = rtnl_link_get_ifindex(link);
 
 	add_link_to_lua(L, link);
-	callback_lua_link(L, index, rtnl_link_get_name(link), "add");
+	callback_lua_nl(L, fid_link_add, index, rtnl_link_get_name(link), "add");
 }
 
 /**
@@ -244,7 +249,7 @@ void cb_addr_initial(struct nl_object *obj, void *arg) {
 void cb_addr_dynamic(struct nl_cache *cache, struct nl_object *obj, int action, void *arg) {
 	//lua_State			*L = (lua_State *)arg;
 
-	fprintf(stderr, "address cache dynamic: %p\n", obj);
+	fprintf(stderr, "address cache dynamic: %p (action=%d)\n", obj, action);
 }
 
 /**
@@ -270,7 +275,7 @@ int netlink_init() {
  *
  * @return			Number of return values (always zero)
  */
-int netlink_watch_link(lua_State *L, int fid) {
+int netlink_watch_link(lua_State *L, int fid_add, int fid_mod, int fid_del) {
 	int rc;
 
 	// Create a new global table for the links
@@ -282,8 +287,10 @@ int netlink_watch_link(lua_State *L, int fid) {
 														(void *)L, &cache_link);
 	fprintf(stderr, "rc=%d\n", rc);
 
-	// Store our callback function
-	fid_link = fid;
+	// Store our callback functions
+	fid_link_add = fid_add;
+	fid_link_mod = fid_mod;
+	fid_link_del = fid_del;
 
 	// Iterate over our initial list making sure we add to the Lua table
 	nl_cache_foreach(cache_link, cb_link_initial, (void *)L);
@@ -298,7 +305,7 @@ int netlink_watch_link(lua_State *L, int fid) {
  *
  * @return			Number of return values (always zero)
  */
-int netlink_watch_addr(lua_State *L, int fid) {
+int netlink_watch_addr(lua_State *L, int fid_add, int fid_mod, int fid_del) {
 	int rc;
 
 	// Create a new global table for the links
@@ -310,8 +317,10 @@ int netlink_watch_addr(lua_State *L, int fid) {
 														(void *)L, &cache_addr);
 	fprintf(stderr, "rc=%d\n", rc);
 
-	// Store our callback function
-	fid_addr = fid;
+	// Store our callback functions
+	fid_addr_add = fid_add;
+	fid_addr_mod = fid_mod;
+	fid_addr_del = fid_del;
 
 	// Iterate over our initial list making sure we add to the Lua table
 	nl_cache_foreach(cache_addr, cb_addr_initial, (void *)L);

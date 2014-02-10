@@ -19,7 +19,7 @@ int main(int argc, char *argv[]) {
 
 	fprintf(stderr, "hello");
 
-	strcpy(ifr.ifr_name, "__gre");
+	strcpy(ifr.ifr_name, "gre0");
 	ifr.ifr_ifru.ifru_data = (void *)p;
 
 	fd = socket(AF_INET, SOCK_DGRAM, 0);
@@ -35,7 +35,7 @@ int main(int argc, char *argv[]) {
 	p->iph.daddr = inet_addr("10.4.4.1");
 	p->iph.saddr = inet_addr("10.4.5.1");
 	
-	strcpy(p->name, "gre0");
+	strcpy(p->name, "greYY");
 
 	p->iph.protocol = IPPROTO_GRE;
 

@@ -19,10 +19,23 @@ DEF["interface/gre"] = {
 		["name"] 		= { type="name", nametype="interface", required=true, unique=true,
 							default=ListItem.namegen, ngprefix="gre" },
 		["type"]		= { type="internal" },
+		["ifindex"]		= { type="internal" },
 		["mtu"] 		= { type="number", range="0-65536", default=1492 },
 		["local"] 		= { type="ipv4", required=true },
 		["remote"] 		= { type="ipv4", required=true }
 	}
+}
+
+DEF["interface/ether"] = {
+	["fields"] = {
+		["name"] 		= { type="name", nametype="interface", required=true, unique=true,
+							default=ListItem.namegen, ngprefix="ether" },
+		["type"]		= { type="internal" },
+		["ifindex"]		= { type="internal" },
+		["origif"]		= { type="internal" },
+		["mtu"] 		= { type="number", range="0-8192", default=1500 },
+	}
+
 }
 
 DEF["interface/pppoe"] = {
@@ -92,31 +105,52 @@ end
 --
 -- Interface callback from Netlink
 --
-function cb_interface(index, name, type)
+function cb_interface_add(index, name, type)
 	print("Interface callback: index="..index.." name="..name.." type="..type)
 	
---	local iface = List.findItem("interface", "name", name)
---	if(iface) then 
-		print("Found interface record!")
-		local i = nl_links[index]
+	local iface = List.findItem("interface", "name", name)
+	if(iface) then 
+		print("Found matching interface record!")
 
-		for k,v in pairs(i) do
-			if(k=="flags") then
-				local s = "";
+		-- Check if we have problems
+		-- TODO: should we compare stuff here? type, mtu etc.
 
-				for x,_ in pairs(v) do s = s .. x .. " " end
-				print("k="..k..s)
-			else
-				print("k="..k.." v="..tostring(v))
-			end
-		end
---	end
+		-- Set the ifindex for future reference
+		iface.config.ifindex = index;
+
+		-- We go active ... if we weren't then this is an event!
+		iface.active = true;
+	else
+		-- We don't have a match ... is this dynamic then?
+		-- For interfaces we don't support dynamic, since everything
+		-- needs to be configured, so we add a config record for
+		-- anything we find and leave it disabled. This will support
+		-- dynamic interfaces (usb etc.)
+		
+	end
+end
+function cb_interface_mod(index, name, type)
+	print("GOT INTERFACE MOD: "..name)
+end
+function cb_interface_del(index, name, type)
+	print("GOT INTERFACE DEL: "..name)
 end
 
 --
 -- Load the unit support library
 --
 m = package.loadlib("c/unit.so", "luaopen_unit")()
+
+--
+-- TODO: how are we going to rename specific interfaces when they
+--       come up?  For example the tunnel and gre stuff will need
+--       to be renamed if we want to reuse gre0.
+--       Also, if we want to rename eth0..n to ether0..n then we
+--       need to find a consistent way of doing that.
+--
+
+
+
 
 interface = Interface:new("gre")
 interface:set("mtu", 1492)
@@ -148,8 +182,8 @@ end
 
 
 unit.init("interface")
-unit.monitor_netlink("link", cb_interface)
-unit.monitor_netlink("addr", cb_addresses)
+unit.monitor_netlink("link", cb_interface_add, cb_interface_mod, cb_interface_del)
+unit.monitor_netlink("addr", cb_addresses, cb_addresses, cb_addresses)
 
 for i,j in ipairs(nl_addrs) do
 	print("Index="..i)
@@ -158,5 +192,8 @@ for i,j in ipairs(nl_addrs) do
 	end
 end
 
+while(1) do
+	unit.loop()
+end
 
 

@@ -208,33 +208,34 @@ static int unmonitor(lua_State *L) {
  *==============================================================================
  */
 static int monitor_netlink(lua_State *L) {
-	int		fid;
+	int		fid_add, fid_mod, fid_del;
 
 	// Check arguments (netlink type, callback)
 	char    *nltype = (char *)luaL_checkstring(L, 1);
-	if(!lua_isfunction(L, 2)) return luaL_error(L, "expected function as argument");
+	if(!lua_isfunction(L, 2)) return luaL_error(L, "expected function as argument #2");
+	if(!lua_isfunction(L, 3)) return luaL_error(L, "expected function as argument #3");
+	if(!lua_isfunction(L, 4)) return luaL_error(L, "expected function as argument #4");
 
-	// Get a function id for the callback
+	// Get a function id for the callbacks
 	lua_pushvalue(L, 2);
-	fid = store_function(L);
+	fid_add = store_function(L);
+	lua_pushvalue(L, 3);
+	fid_mod = store_function(L);
+	lua_pushvalue(L, 4);
+	fid_del = store_function(L);
 
 	// Initialise the netlink filehandle if not already done
 	if(!nl_fd) nl_fd = netlink_init();
 
 	// Do the right thing
 	if(strcmp(nltype, "link") ==0 ) {
-		netlink_watch_link(L, fid);
+		netlink_watch_link(L, fid_add, fid_mod, fid_del);
 	} else if(strcmp(nltype, "addr") == 0) {
-		netlink_watch_addr(L, fid);
+		netlink_watch_addr(L, fid_add, fid_mod, fid_del);
 	} else {
-		free_function(L, fid);
+		free_function(L, fid_add); free_function(L, fid_mod); free_function(L, fid_del);
 		return luaL_error(L, "unknown netlink type: %s", nltype);
 	}
-	
-	fprintf(stderr, "function reference is %d\n", fid);
-
-	netlink_watch_link(L, fid);	
-
 	lua_pushnumber(L, 0);
 	return 1;
 }

@@ -11,8 +11,9 @@
 -- scratch 	 - the working set config for changes/reversions
 --
 -- States
---	invalid  -- valid config, but failed for some reason
---	inactive -- invalid config, unable to take live
+--	valid    -- valid config, i.e. enough to be ok at some point
+--	enabled  -- allows toggling (basically removing)
+--	active   -- when it is live
 --
 --
 
@@ -38,9 +39,11 @@ end
 --
 -- Find a ListItem in a list given a field and value to find
 --
+-- NOTE: we only search valid items
+--
 function List.findItem(listname, fieldname, value)
 	for k,v in ipairs(LIST[listname]) do
-		if(v.config[fieldname] == value) then return v end
+		if(v.valid and v.config[fieldname] == value) then return v end
 	end
 	return nil
 end
@@ -80,6 +83,7 @@ function ListItem:init(listname, type)
 	self.scratch = nil				-- scratch area for config changes
 	self.valid = false				-- we start invalid (until we learn otherwise)
 	self.enabled = true				-- we start enabled
+	self.active = false				-- we start inactive
 	
 	-- Populate the default entries
 	self:defaults()
@@ -180,6 +184,8 @@ function ListItem:apply()
 	for k,v in pairs(self.fields) do
 		if(v.required and not self.config[k]) then valid=false end
 	end
+	
+	self.valid = valid
 	return valid
 end
 
