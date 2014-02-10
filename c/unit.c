@@ -207,16 +207,32 @@ static int unmonitor(lua_State *L) {
  * Allow us to monitor netlink related stuff...
  *==============================================================================
  */
-static int netlink_link(lua_State *L) {
+static int monitor_netlink(lua_State *L) {
 	int		fid;
 
-	if(!lua_isfunction(L, 1)) return luaL_error(L, "expected function as argument");
-	lua_pushvalue(L, 1);
+	// Check arguments (netlink type, callback)
+	char    *nltype = (char *)luaL_checkstring(L, 1);
+	if(!lua_isfunction(L, 2)) return luaL_error(L, "expected function as argument");
+
+	// Get a function id for the callback
+	lua_pushvalue(L, 2);
 	fid = store_function(L);
 
+	// Initialise the netlink filehandle if not already done
+	if(!nl_fd) nl_fd = netlink_init();
+
+	// Do the right thing
+	if(strcmp(nltype, "link") ==0 ) {
+		netlink_watch_link(L, fid);
+	} else if(strcmp(nltype, "addr") == 0) {
+		netlink_watch_addr(L, fid);
+	} else {
+		free_function(L, fid);
+		return luaL_error(L, "unknown netlink type: %s", nltype);
+	}
+	
 	fprintf(stderr, "function reference is %d\n", fid);
 
-	if(!nl_fd) nl_fd = netlink_init();
 	netlink_watch_link(L, fid);	
 
 	lua_pushnumber(L, 0);
@@ -293,7 +309,7 @@ static const struct luaL_reg lib[] = {
 	{"monitor_log", monitor_log},
 	{"monitor_file", monitor_file},
 	{"unmonitor", unmonitor},
-	{"netlink_link", netlink_link},
+	{"monitor_netlink", monitor_netlink},
 	{"loop", loop},
 	{NULL, NULL}
 };
