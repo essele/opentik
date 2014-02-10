@@ -8,6 +8,7 @@
 #include "mosquitto.h"
 #include "filewatch.h"
 #include "luafuncs.h"
+#include "netlink.h"
 
 /*
  * We keep a reference to the mosquitto struct so we don't have
@@ -16,6 +17,7 @@
 struct mosquitto 	*mosq = 0;
 int					fw_fd = 0;		// inotify_fd
 int					ms_fd = 0;		// mosquitto_fd
+int					nl_fd = 0;		// netlink_fd
 
 /*==============================================================================
  * Handle incoming messages
@@ -88,7 +90,7 @@ static int init(lua_State *L) {
 	mosquitto_message_callback_set(mosq, message_callback);
 
 	// Create the _topic_callbacks table
-	lua_newtable(L),
+	lua_newtable(L);
 	lua_setglobal(L, "_topic_callbacks");
 
 	// Initialise filewatch...
@@ -201,6 +203,26 @@ static int unmonitor(lua_State *L) {
 	return 1;
 }
 
+/*==============================================================================
+ * Allow us to monitor netlink related stuff...
+ *==============================================================================
+ */
+static int netlink_link(lua_State *L) {
+	int		fid;
+
+	if(!lua_isfunction(L, 1)) return luaL_error(L, "expected function as argument");
+	lua_pushvalue(L, 1);
+	fid = store_function(L);
+
+	fprintf(stderr, "function reference is %d\n", fid);
+
+	if(!nl_fd) nl_fd = netlink_init();
+	netlink_watch_link(L, fid);	
+
+	lua_pushnumber(L, 0);
+	return 1;
+}
+
 /*
  * LOOP
  *
@@ -218,12 +240,14 @@ static int loop(lua_State *L) {
 	FD_ZERO(&fds_rd);
 	FD_ZERO(&fds_wr);
 
-	FD_SET(fw_fd, &fds_rd);
-	FD_SET(ms_fd, &fds_rd);
+	if(fw_fd) FD_SET(fw_fd, &fds_rd);
+	if(ms_fd) FD_SET(ms_fd, &fds_rd);
+	if(nl_fd) FD_SET(nl_fd, &fds_rd);
 	if(mosquitto_want_write(mosq)) FD_SET(ms_fd, &fds_wr);
 
 	if(fw_fd > maxfd) maxfd=fw_fd;
 	if(ms_fd > maxfd) maxfd=ms_fd;
+	if(nl_fd > maxfd) maxfd=nl_fd;
 	maxfd++;
 	
 	rc = select(maxfd, &fds_rd, &fds_wr, NULL, &tv);
@@ -246,6 +270,10 @@ static int loop(lua_State *L) {
 			rc = filewatch_read(L, fw_fd);
 			fprintf(stderr, "fwread: %d\n", rc);
 		}
+		if(FD_ISSET(nl_fd,&fds_rd)) {
+			rc = netlink_read(L, nl_fd);
+			fprintf(stderr, "nlread: %d\n", rc);
+		}
 	}
 	
 
@@ -265,6 +293,7 @@ static const struct luaL_reg lib[] = {
 	{"monitor_log", monitor_log},
 	{"monitor_file", monitor_file},
 	{"unmonitor", unmonitor},
+	{"netlink_link", netlink_link},
 	{"loop", loop},
 	{NULL, NULL}
 };

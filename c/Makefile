@@ -1,11 +1,12 @@
 
-MOSDIR_I="/home/essele/dev/mosquitto/mosquitto-1.2.3/lib"
-MOSDIR_L="/home/essele/dev/mosquitto/mosquitto-1.2.3/lib"
+MOSDIR_I="/home/essele/dev/opentik/mosquitto-1.2.3/lib"
+MOSDIR_L="/home/essele/dev/opentik/mosquitto-1.2.3/lib"
+LUADIR_I="/home/essele/dev/opentik/luajit-2.0/src"
 
-LDFLAGS=-L$(MOSDIR_L) -lmosquitto -lpthread -lrt -lnl
-CFLAGS=-I$(MOSDIR_I)
+LDFLAGS=-L$(MOSDIR_L) -lmosquitto -lpthread -lrt -lnl-3 -lnl-route-3
+CFLAGS=-I$(MOSDIR_I) -I$(LUADIR_I) -I/usr/include/libnl3
 
-OBJS=unit.o serialize.o filewatch.o 
+OBJS=unit.o serialize.o filewatch.o netlink.o
 LIB=unit.so
 
 DEPS=serialize.h filewatch.h luafuncs.h
@@ -21,5 +22,3 @@ $(LIB):	$(OBJS)
 clean:
 	rm $(LIB) $(OBJS)
 
-lee: netlink.c
-	gcc -o lee -Wall -Werror netlink.c -lnl

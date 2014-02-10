@@ -21,3 +21,10 @@
 *.i*86
 *.x86_64
 *.hex
+
+# Specific stuff
+luajit
+mosquitto-1.2.3/client/mosquitto_pub
+mosquitto-1.2.3/client/mosquitto_sub
+mosquitto-1.2.3/src/mosquitto
+

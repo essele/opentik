@@ -1,0 +1,142 @@
+#!./luajit
+
+require("lua.ListItem")
+
+unit = package.loadlib("c/unit.so", "luaopen_unit")()
+
+--
+-- Create the main interface list and set the name field
+-- as the key field
+--
+List.create("interface", "name")
+
+--
+-- Setup the field definitions for the various types of
+-- interfaces
+--
+DEF["interface/gre"] = {
+	["fields"] = {
+		["name"] 		= { type="name", nametype="interface", required=true, unique=true,
+							default=ListItem.namegen, ngprefix="gre" },
+		["type"]		= { type="internal" },
+		["mtu"] 		= { type="number", range="0-65536", default=1492 },
+		["local"] 		= { type="ipv4", required=true },
+		["remote"] 		= { type="ipv4", required=true }
+	}
+}
+
+DEF["interface/pppoe"] = {
+	["fields"] = {
+		["name"] 		= { type="name", nametype="interface", fred=45 },
+		["mtu"] 		= { type="number", range="0-65536" }
+	}
+}
+
+
+--
+-- Create a new structure containing:
+--
+-- 1. The fields needed to hold and manage the config
+-- 2. The values for the fields
+-- 3. Functions to handle actions on the object
+--
+Interface = ListItem:inherit()
+
+function Interface:new(type)
+	local interface = {}
+	local iftype = "interface/"..type
+
+	-- Setup object bit...
+	setmetatable(interface, self)
+	self.__index = self
+
+	-- Initialise the ListItem...
+	if(not interface:init("interface", iftype)) then return nil end
+
+	-- Setup the internal fieds...
+	interface.config.type = type
+
+	return interface
+end
+
+--
+-- The 'set' method simply validates that the values meet the fields requirements
+-- then sets the values in the config area (for later apply)
+--
+function Interface:set(item, value)
+	print("interface.set routing")
+	self.super.set(self, item, value)
+end
+
+--
+-- For apply() we need to track two scenarios...
+-- 1. We weren't valid and now we are ... i.e. add the interface
+-- 2. We just changed some stuff ... i.e. down, change, up
+--
+function Interface:apply()
+	local wasvalid = self.valid
+	local isvalid = self.super.apply(self)
+
+	if(not wasvalid and isvalid) then
+		print("NEW INTERFACE GOING LIVE")
+	elseif(wasvalid and isvalid) then
+		print("VALID CONFIG CHANGE")
+	else
+		print("STILL INVALID")
+	end
+	
+	return isvalid
+end
+
+
+--
+-- Interface callback from Netlink
+--
+function cb_interface(index, name, type)
+	print("Interface callback: index="..index.." name="..name.." type="..type)
+	
+	local iface = List.findItem("interface", "name", name)
+	if(iface) then 
+		print("Found interface record!")
+		local i = nl_links[index]
+
+		for k,v in pairs(i) do
+			print("k="..k.." v="..tostring(v))
+		end
+	end
+end
+
+--
+-- Load the unit support library
+--
+m = package.loadlib("c/unit.so", "luaopen_unit")()
+
+interface = Interface:new("gre")
+interface:set("mtu", 1492)
+interface:set("local", "10.2.0.1")
+interface:set("remote", "10.3.0.1")
+interface:set("name", "grelee")
+
+rc = interface:apply()
+
+interface:set("name", "fred")
+
+print("Apply returned " .. tostring(rc))
+for k,v in pairs(interface.config) do
+		print("INTERFACEconfig: "..k.."="..v)
+end
+
+for i,j in ipairs(LIST.interface) do
+	print("ITEM "..i)
+	for k,v in pairs(j.config) do
+		print("CONFIG: "..k.."="..v)
+	end
+end
+
+interface = Interface:new("gre")
+interface:set("name", "fred")
+
+unit.init("interface")
+unit.netlink_link(cb_interface)
+
+
