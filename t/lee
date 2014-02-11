@@ -1,0 +1,30 @@
+#!./luajit
+
+local ffi = require("ffi")
+local cap = ffi.load("libcap.so")
+
+ffi.cdef[[
+	void	*cap_get_proc(void);
+	int     cap_set_flag(void *, int, int, int *, int);
+	int		cap_set_proc(void *);
+
+]]
+
+print("Hello")
+
+x = ffi.new("void *")
+cl = ffi.new("int[1]")
+
+b = cap.cap_get_proc()
+
+print("B is " .. tostring(b))
+
+cl[0] = 12		-- CAP_NET_ADMIN
+
+rc = cap.cap_set_flag(b, 1, 1, cl, 1)
+
+print("rc="..rc)
+
+rc = cap.cap_set_proc(b)
+
+print("rc="..rc)

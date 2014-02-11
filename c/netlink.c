@@ -64,11 +64,26 @@ void create_flags_hash(lua_State *L, unsigned int flags) {
  * Call the callback function for items with change details
  * @arg L			Lua state
  * @arg fid			function id to call
- * @arg index		the relevant index (if index for both types)
- * @arg name		the thing we are notifying (interface or address)
  * @arg action		is it "add", "change" or "delete"
+ * @arg link		the link object
  */
-void callback_lua_nl(lua_State *L, int fid, int index, char *name, char *action) {
+void callback_lua_link(lua_State *L, int fid, struct rtnl_link *link, char *action) {
+	int					index = rtnl_link_get_ifindex(link);
+	char				buf[256];
+
+    get_function(L, fid);
+    if(!lua_isfunction(L, -1)) {
+        fprintf(stderr, "callback_lua_nl: invalid function for callback\n");
+        return;
+    }
+	lua_pushnumber(L, index);
+	lua_pushstring(L, rtnl_link_get_name(link));
+	lua_pushstring(L, nl_llproto2str(rtnl_link_get_arptype(link), buf, sizeof(buf)));
+	lua_pushstring(L, action);
+    lua_call(L, 4, 0);
+}
+
+void callback_lua_nl(lua_State *L, int fid, int index, char *type, char *name, char *action) {
     get_function(L, fid);
     if(!lua_isfunction(L, -1)) {
         fprintf(stderr, "callback_lua_nl: invalid function for callback\n");
@@ -204,20 +219,19 @@ static void remove_link_from_lua(lua_State *L, struct rtnl_link *link) {
 void	cb_link_dynamic(struct nl_cache *cache, struct nl_object *obj, int action, void *arg) {
 	lua_State			*L = (lua_State *)arg;
 	struct rtnl_link	*link = (struct rtnl_link *)obj;
-	int					index = rtnl_link_get_ifindex(link);
 
 	switch(action) {
 		case NL_ACT_NEW:
 			add_link_to_lua(L, link);
-			callback_lua_nl(L, fid_link_add, index, rtnl_link_get_name(link), "add");
+			callback_lua_link(L, fid_link_add, link, "add");
 			break;
 		case NL_ACT_CHANGE:
 			add_link_to_lua(L, link);
-			callback_lua_nl(L, fid_link_mod, index, rtnl_link_get_name(link), "change");
+			callback_lua_link(L, fid_link_mod, link, "change");
 			break;
 		case NL_ACT_DEL:
 			remove_link_from_lua(L, link);
-			callback_lua_nl(L, fid_link_del, index, rtnl_link_get_name(link), "delete");
+			callback_lua_link(L, fid_link_del, link, "delete");
 			break;
 	}
 }
@@ -230,10 +244,9 @@ void	cb_link_dynamic(struct nl_cache *cache, struct nl_object *obj, int action, 
 void	cb_link_initial(struct nl_object *obj, void *arg) {
 	lua_State			*L = (lua_State *)arg;
 	struct rtnl_link	*link = (struct rtnl_link *)obj;
-	int					index = rtnl_link_get_ifindex(link);
 
 	add_link_to_lua(L, link);
-	callback_lua_nl(L, fid_link_add, index, rtnl_link_get_name(link), "add");
+	callback_lua_link(L, fid_link_add, link, "add");
 }
 
 /**

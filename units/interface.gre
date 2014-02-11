@@ -1,0 +1,42 @@
+-- vim: set syntax=lua ts=4 shiftwidth=4 :
+
+--  
+-- This is a sub-interface module, we just provide specific hooks
+-- for the main interface module
+--
+
+--
+-- Specific our CALLBACK section
+--
+CB.gre = {}
+
+--
+-- Specific field definitions for a GRE type interface
+--
+DEF["interface/gre"] = {
+	["fields"] = {
+		["name"] 		= { type="name", nametype="interface", required=true, unique=true,
+							default=ListItem.namegen, ngprefix="gre" },
+		["type"]		= { type="internal" },
+		["ifindex"]		= { type="internal" },
+		["mtu"] 		= { type="number", range="0-65536", default=1492 },
+		["local"] 		= { type="ipv4", required=true },
+		["remote"] 		= { type="ipv4", required=true }
+	}
+}
+
+
+--
+-- If we get a new interface then we need to check if it's the
+-- initial "extra" gre interface so that we can rename it. We know
+-- that this will only happen once and anything subsequent will be
+-- a valid tunnel.
+--
+local gre_dummy_seen = false
+
+function CB.gre.if_pre_add()
+	print("IN GRE PRE ADD")
+end
+
+print("YEPYE")
+

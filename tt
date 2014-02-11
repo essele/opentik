@@ -1,0 +1,17 @@
+#!./luajit
+
+print(package.path)
+print(package.cpath)
+
+OT_BASE_DIR="/home/essele/dev/opentik"
+OT_MODULES=OT_BASE_DIR.."/lua/?.lua"
+OT_LIBS=OT_BASE_DIR.."/c/?.so"
+
+package.path = OT_MODULES
+package.cpath = OT_LIBS..";/usr/lib/lua/5.1/?.so"
+
+require("unit")         -- main support library
+require("tunnel")
+
+tunnel.tt()
+

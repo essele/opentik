@@ -17,8 +17,8 @@
 --
 --
 
-require("lua.Log")
-require("lua.Validators")
+require("Log")
+require("Validators")
 
 LIST = {}			-- all the lists
 DEF = {}			-- the field definitions
