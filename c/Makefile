@@ -8,7 +8,7 @@ CFLAGS=-I$(MOSDIR_I) -I$(LUADIR_I) -I/usr/include/libnl3
 
 DEPS=serialize.h filewatch.h luafuncs.h netlink.h tunnel.h unit_service.h
 
-UNITOBJS=unit.o unit_service.o serialize.o tunnel.o
+UNITOBJS=unit.o unit_service.o serialize.o 
 UNITLIB=unit.so
 
 NLOBJS=netlink.o
@@ -40,5 +40,5 @@ $(TUNNELLIB):	$(TUNNELOBJS)
 	gcc -c -Wall -Werror -fpic -o $@ $< $(CFLAGS)
 
 clean:
-	rm $(UNITLIB) $(UNITOBJS) $(TUNNELLIB) $(TUNNELOBJS)
+	rm $(LIBS) $(UNITOBJS) $(NLOBJS) $(TUNNELOBJS) $(FWOBJS)
 

@@ -10,6 +10,11 @@ OT_LIBS=OT_BASE_DIR.."/c/?.so"
 package.path = OT_MODULES
 package.cpath = OT_LIBS..";/usr/lib/lua/5.1/?.so"
 
+--
+-- Define our UNIT and include required modules
+--
+print("XXXXXXXX -- "..arg[0])
+
 require("unit")         -- main support library
 require("tunnel")
 require("netlink")
@@ -34,16 +39,17 @@ function cb_f(a,b,c)
 end
 
 
-unit.init("tt")
+print("REG: " .. tostring(__unit_register))
+
+
 unit.subscribe("/fred", lee);
 --unit.publish("/fred", "hello", true);
 
-unit.add_service(netlink.get_service())
-unit.add_service(filewatch.get_service())
+--unit.add_service(filewatch.get_service())
 
-netlink.monitor_netlink("link", cb_interface_add)
+--netlink.monitor_netlink("link", cb_interface_add)
 
-filewatch.monitor_file("/tmp/lee", cb_f)
+--filewatch.monitor_file("/tmp/lee", cb_f)
 
 --unit.if_rename("gre0", "tt")
 --

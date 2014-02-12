@@ -20,7 +20,6 @@
  */
 static struct unit_service_desc     u_svc;
 
-
 /*
  * Internal data structure for tracking what we monitor
  */
@@ -423,14 +422,16 @@ static const struct luaL_reg lib[] = {
  *------------------------------------------------------------------------------
  */
 int luaopen_filewatch(lua_State *L) {
+	// Initialise the module...
 	luaL_openlib(L, "filewatch", lib, 0);
 
+	// Populate the service structure...
 	u_svc.fd = inotify_init();
 	u_svc.read_func = filewatch_read;
 	u_svc.write_func = NULL;
 
+	// And register...
+    register_service(L, &u_svc);
 	return 1;
 }
-
-
 

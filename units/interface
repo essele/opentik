@@ -11,6 +11,7 @@ package.path = OT_MODULES
 package.cpath = OT_LIBS..";/usr/lib/lua/5.1/?.so"
 
 require("unit")			-- main support library
+require("netlink")		-- netlink support
 require("ListItem")		-- to support lists
 require("lfs")			-- for filesystem activities
 
@@ -264,10 +265,8 @@ interface:set("name", "fred")
 function cb_addresses()
 end
 
-
-unit.init("interface")
-unit.monitor_netlink("link", cb_interface_add, cb_interface_mod, cb_interface_del)
-unit.monitor_netlink("addr", cb_addresses, cb_addresses, cb_addresses)
+netlink.watch("link", cb_interface_add, cb_interface_mod, cb_interface_del)
+netlink.watch("addr", cb_addresses, cb_addresses, cb_addresses)
 
 for i,j in ipairs(nl_addrs) do
 	print("Index="..i)
@@ -277,7 +276,7 @@ for i,j in ipairs(nl_addrs) do
 end
 
 while(1) do
-	unit.loop()
+	unit.service_loop()
 end
 
 

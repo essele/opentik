@@ -264,6 +264,9 @@ static void cb_addr_dynamic(struct nl_cache *cache, struct nl_object *obj, int a
 /**
  * Rename an interface: we will lookup the old interface then
  * create a change object and action the change
+ *
+ * TODO: If the interface is up, then we need to take it down before
+ *       we attempt a rename.
  */
 static int netlink_if_rename(lua_State *L) {
 	struct rtnl_link	*old, *new;
@@ -375,7 +378,7 @@ static int netlink_read(lua_State *L, int fd) {
  * Allow us to monitor netlink related stuff...
  *==============================================================================
  */
-static int monitor_netlink(lua_State *L) {
+static int watch_netlink(lua_State *L) {
 	int		fids[3];
 	int		i;
 
@@ -402,29 +405,14 @@ static int monitor_netlink(lua_State *L) {
 	return 1;
 }
 
-/*==============================================================================
- * Provide our service data for the unit_service module
- *==============================================================================
- */
-static int get_service(lua_State *L) {
-    u_svc.fd = nl_cache_fd;
-    u_svc.read_func = netlink_read;
-	u_svc.write_func = NULL;
-
-    lua_pushlightuserdata(L, (void *)&u_svc);
-    return 1;
-}
 
 /*==============================================================================
  * These are the functions we export to Lua...
  *==============================================================================
  */
 static const struct luaL_reg lib[] = {
-	{"monitor_netlink", monitor_netlink},
+	{"watch", watch_netlink},
 	{"if_rename", netlink_if_rename},
-
-	// Service descriptor...
-	{"get_service", get_service},
 	{NULL, NULL}
 };
 
@@ -454,6 +442,14 @@ int luaopen_netlink(lua_State *L) {
 		fprintf(stderr, "unable to connect\n");
 		return 0;
 	}
+
+	// Populate the service descriptor...
+    u_svc.fd = nl_cache_fd;
+    u_svc.read_func = netlink_read;
+	u_svc.write_func = NULL;
+
+	// And register...
+	register_service(L, &u_svc);
 	return 1;
 }
 
