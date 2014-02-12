@@ -13,5 +13,18 @@ package.cpath = OT_LIBS..";/usr/lib/lua/5.1/?.so"
 require("unit")         -- main support library
 require("tunnel")
 
-tunnel.tt()
+--tunnel.tt()
+
+function cb_interface_add()
+end
+function cb_interface_mod()
+end
+function cb_interface_del()
+end
+
+
+unit.init("tt")
+unit.monitor_netlink("link", cb_interface_add, cb_interface_mod, cb_interface_del)
+
+unit.if_rename("gre0", "tt")
 

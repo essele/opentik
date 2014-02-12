@@ -32,9 +32,26 @@ DEF["interface/gre"] = {
 -- that this will only happen once and anything subsequent will be
 -- a valid tunnel.
 --
+--
 local gre_dummy_seen = false
 
-function CB.gre.if_pre_add()
+function CB.gre.if_pre_add(index, name)
+
+	-- If we see __gre0 then we know we have already done the rename
+	-- and we must have restarted.
+	if(name == "__gre") then
+		gre_dummy_seen = true
+		return "ignore"
+	end
+
+	-- If we haven't seen gre0 then we can rename it and set
+	-- the flag.
+	if(name == "gre0" and not gre_dummy_seen) then
+		print("NEED TO RENAME GRE0 TO __GRE")
+		gre_dummy_seen = true
+		return "ignore"
+	end
+	
 	print("IN GRE PRE ADD")
 end
 

@@ -104,7 +104,7 @@ void callback_lua_nl(lua_State *L, int fid, int index, char *type, char *name, c
 /**
  * Add/modify link details within the "nl_links" table
  * @arg L			Lua state
- * @arg link			Netlink rtnl_link object
+ * @arg link		Netlink rtnl_link object
  */
 static void add_link_to_lua(lua_State *L, struct rtnl_link *link) {
 	unsigned int	flags;
@@ -263,6 +263,56 @@ void cb_addr_dynamic(struct nl_cache *cache, struct nl_object *obj, int action, 
 	//lua_State			*L = (lua_State *)arg;
 
 	fprintf(stderr, "address cache dynamic: %p (action=%d)\n", obj, action);
+}
+
+/**
+ * Rename an interface: we will lookup the old interface then
+ * create a change object and action the change
+ */
+int netlink_if_rename(lua_State *L) {
+	struct rtnl_link	*old, *new;
+	struct nl_sock		*nls;
+
+	char    *oldname = (char *)luaL_checkstring(L, 1);
+	char    *newname = (char *)luaL_checkstring(L, 2);
+
+	nls = nl_socket_alloc();
+	if(!nls) {
+		fprintf(stderr, "unable to alloc sock\n");
+		lua_pushnumber(L, 1);
+		return 1;
+	}
+	if(nl_connect(nls, NETLINK_ROUTE) != 0) {
+		fprintf(stderr, "unable to connect\n");
+		lua_pushnumber(L, 1);
+		return 1;
+	}
+
+	old = rtnl_link_get_by_name(cache_link, oldname);
+	if(!old) {
+		fprintf(stderr, "rename failed to find old interface");
+		lua_pushnumber(L, 1);
+		return 1;
+	}
+	new = rtnl_link_alloc();
+	if(!new) {
+		rtnl_link_put(old);
+		fprintf(stderr, "unable to create new link object");
+		lua_pushnumber(L, 1);
+		return 1;
+	}
+	rtnl_link_set_name(new, newname);
+	fprintf(stderr, "about to try change");
+	
+	int rc = rtnl_link_change(nls, old, new, 0);
+	fprintf(stderr, "change returned %d\n", rc);
+
+	rtnl_link_put(old);
+	rtnl_link_put(new);
+
+
+	lua_pushnumber(L, 0);
+	return 1;
 }
 
 /**

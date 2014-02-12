@@ -311,6 +311,7 @@ static const struct luaL_reg lib[] = {
 	{"unmonitor", unmonitor},
 	{"monitor_netlink", monitor_netlink},
 	{"loop", loop},
+	{"if_rename", netlink_if_rename},
 	{NULL, NULL}
 };
 
