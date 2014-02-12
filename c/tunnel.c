@@ -20,6 +20,24 @@
 #include <linux/sockios.h>
 #include <linux/if_tunnel.h>
 
+#include "unit_service.h"
+
+struct		unit_service_desc	us;
+
+static int my_read(lua_State *L, int fd) {
+	fprintf(stderr, "in my_read\n");	
+	return 0;
+}
+
+
+static int get_service(lua_State *L) {
+	us.fd = 5;
+	us.read_func = my_read;
+	
+	lua_pushlightuserdata(L, (void *)&us);
+	return 1;
+}
+
 
 
 int tun_test() {
@@ -77,6 +95,7 @@ static int tt(lua_State *L) {
  *	*/
 static const struct luaL_reg lib[] = {
 	{"tt", tt},
+	{"get_service", get_service},
 	{NULL, NULL}
 };
 

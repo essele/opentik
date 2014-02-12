@@ -9,6 +9,7 @@
 #include "filewatch.h"
 #include "luafuncs.h"
 #include "netlink.h"
+#include "unit_service.h"
 
 /*
  * We keep a reference to the mosquitto struct so we don't have
@@ -16,7 +17,6 @@
  */
 struct mosquitto 	*mosq = 0;
 int					fw_fd = 0;		// inotify_fd
-int					ms_fd = 0;		// mosquitto_fd
 int					nl_fd = 0;		// netlink_fd
 
 /*==============================================================================
@@ -69,7 +69,7 @@ void message_callback(struct mosquitto *m, void *obj, const struct mosquitto_mes
 static int init(lua_State *L) {
 	char    *unitname = (char *)luaL_checkstring(L, 1);
 	int		rc;
-	fprintf(stderr, "unit/init: got arg: %s\n", unitname);
+
 	if(mosq) return luaL_error(L, "init already called, only allowed once.");
 
 	// Initialise and create new session...
@@ -93,11 +93,8 @@ static int init(lua_State *L) {
 	lua_newtable(L);
 	lua_setglobal(L, "_topic_callbacks");
 
-	// Initialise filewatch...
-	fw_fd = filewatch_init(L);
-
-	// Get the mosquitto fd...
-	ms_fd = mosquitto_socket(mosq);
+	// Let the service code know about mosquitto...
+	service_init(mosq);
 
 	// Return 0
 	lua_pushnumber(L, 0);
@@ -167,6 +164,7 @@ static int publish(lua_State *L) {
  * Add a file to be monitored for changes
  *==============================================================================
  */
+/*
 static int add_monitor(lua_State *L, int type) {
 	char    *filename = (char *)luaL_checkstring(L, 1);
 	int		fid;
@@ -202,101 +200,7 @@ static int unmonitor(lua_State *L) {
 	lua_pushnumber(L, 0);
 	return 1;
 }
-
-/*==============================================================================
- * Allow us to monitor netlink related stuff...
- *==============================================================================
- */
-static int monitor_netlink(lua_State *L) {
-	int		fid_add, fid_mod, fid_del;
-
-	// Check arguments (netlink type, callback)
-	char    *nltype = (char *)luaL_checkstring(L, 1);
-	if(!lua_isfunction(L, 2)) return luaL_error(L, "expected function as argument #2");
-	if(!lua_isfunction(L, 3)) return luaL_error(L, "expected function as argument #3");
-	if(!lua_isfunction(L, 4)) return luaL_error(L, "expected function as argument #4");
-
-	// Get a function id for the callbacks
-	lua_pushvalue(L, 2);
-	fid_add = store_function(L);
-	lua_pushvalue(L, 3);
-	fid_mod = store_function(L);
-	lua_pushvalue(L, 4);
-	fid_del = store_function(L);
-
-	// Initialise the netlink filehandle if not already done
-	if(!nl_fd) nl_fd = netlink_init();
-
-	// Do the right thing
-	if(strcmp(nltype, "link") ==0 ) {
-		netlink_watch_link(L, fid_add, fid_mod, fid_del);
-	} else if(strcmp(nltype, "addr") == 0) {
-		netlink_watch_addr(L, fid_add, fid_mod, fid_del);
-	} else {
-		free_function(L, fid_add); free_function(L, fid_mod); free_function(L, fid_del);
-		return luaL_error(L, "unknown netlink type: %s", nltype);
-	}
-	lua_pushnumber(L, 0);
-	return 1;
-}
-
-/*
- * LOOP
- *
- */
-static int loop(lua_State *L) {
-//	int rc = mosquitto_loop(mosq, -1, 1);
-	fd_set				fds_rd, fds_wr;
-	struct timeval		tv;
-	int					rc;
-	int					maxfd = 0;
-
-	tv.tv_sec = 0;
-	tv.tv_usec = 1000*1000;
-
-	FD_ZERO(&fds_rd);
-	FD_ZERO(&fds_wr);
-
-	if(fw_fd) FD_SET(fw_fd, &fds_rd);
-	if(ms_fd) FD_SET(ms_fd, &fds_rd);
-	if(nl_fd) FD_SET(nl_fd, &fds_rd);
-	if(mosquitto_want_write(mosq)) FD_SET(ms_fd, &fds_wr);
-
-	if(fw_fd > maxfd) maxfd=fw_fd;
-	if(ms_fd > maxfd) maxfd=ms_fd;
-	if(nl_fd > maxfd) maxfd=nl_fd;
-	maxfd++;
-	
-	rc = select(maxfd, &fds_rd, &fds_wr, NULL, &tv);
-	fprintf(stderr, "select rc=%d\n", rc);
-
-	if(rc == 0) {
-		// Timeout...
-		rc = mosquitto_loop_misc(mosq);
-		fprintf(stderr, "mlmisc: %d\n", rc);
-	} else {
-		if(FD_ISSET(ms_fd,&fds_rd)) {
-			rc = mosquitto_loop_read(mosq, 1);	
-			fprintf(stderr, "mlread: %d\n", rc);
-		}
-		if(FD_ISSET(ms_fd,&fds_wr)) {
-			rc = mosquitto_loop_write(mosq, 1);	
-			fprintf(stderr, "mlwrite: %d\n", rc);
-		}
-		if(FD_ISSET(fw_fd,&fds_rd)) {
-			rc = filewatch_read(L, fw_fd);
-			fprintf(stderr, "fwread: %d\n", rc);
-		}
-		if(FD_ISSET(nl_fd,&fds_rd)) {
-			rc = netlink_read(L, nl_fd);
-			fprintf(stderr, "nlread: %d\n", rc);
-		}
-	}
-	
-
-	lua_pushnumber(L, rc);
-	return 1;
-} 
+*/
 
 /*==============================================================================
  * These are the functions we export to Lua...
@@ -306,12 +210,14 @@ static const struct luaL_reg lib[] = {
 	{"init", init},
 	{"subscribe", subscribe},
 	{"publish", publish},
-	{"monitor_log", monitor_log},
-	{"monitor_file", monitor_file},
-	{"unmonitor", unmonitor},
-	{"monitor_netlink", monitor_netlink},
-	{"loop", loop},
-	{"if_rename", netlink_if_rename},
+//	{"monitor_log", monitor_log},
+//	{"monitor_file", monitor_file},
+//	{"unmonitor", unmonitor},
+
+// Service (filehandle monitoring) helpers
+	{"add_service", add_service},
+	{"remove_service", remove_service},
+	{"service_loop", service_loop},
 	{NULL, NULL}
 };
 

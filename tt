@@ -12,19 +12,50 @@ package.cpath = OT_LIBS..";/usr/lib/lua/5.1/?.so"
 
 require("unit")         -- main support library
 require("tunnel")
+require("netlink")
+require("filewatch")
 
 --tunnel.tt()
 
-function cb_interface_add()
+function cb_interface_add(index, name, type)
+	print("i="..index.." name="..name.." type="..type)
 end
 function cb_interface_mod()
 end
 function cb_interface_del()
 end
 
+function lee() 
+	print("IN LEE")
+end
+
+function cb_f(a,b,c)
+	print("a="..a.." b="..b.." x")
+end
+
 
 unit.init("tt")
-unit.monitor_netlink("link", cb_interface_add, cb_interface_mod, cb_interface_del)
+unit.subscribe("/fred", lee);
+--unit.publish("/fred", "hello", true);
 
-unit.if_rename("gre0", "tt")
+unit.add_service(netlink.get_service())
+unit.add_service(filewatch.get_service())
+
+netlink.monitor_netlink("link", cb_interface_add)
+
+filewatch.monitor_file("/tmp/lee", cb_f)
+
+--unit.if_rename("gre0", "tt")
+--
+
+--x = tunnel.get_service()
+--print("X is "..tostring(x))
+
+--unit.add_service(x)
+
+
+while(1) do
+	unit.service_loop()
+end
+
 

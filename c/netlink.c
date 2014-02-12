@@ -11,21 +11,26 @@
 #include <netlink/route/link.h>
 #include <netlink/route/addr.h>
 #include "luafuncs.h"
+#include "unit_service.h"
 
 /*
  * This module provides basic netlink functionality so that we can 
  * monitor (and ultimately control) link, address and route information
+ *
+ * We have a unit_service_desc for the service_loop
  */
-
+static struct unit_service_desc		u_svc;
 
 /*
  * We have a cache manager, and then a cache for each type of record,
  * we also store the fid for each type here so we can callback events
  * to Lua
  */
+static struct nl_sock		*nls;				// for connection
 static struct nl_cache_mngr	*mngr;
 static struct nl_cache		*cache_link;
 static struct nl_cache		*cache_addr;
+static int					nl_cache_fd;		// cache stuff
 static int					fid_link_add, fid_link_mod, fid_link_del;
 static int					fid_addr_add, fid_addr_mod, fid_addr_del;
 
@@ -44,7 +49,7 @@ static int					fid_addr_add, fid_addr_mod, fid_addr_del;
  * @arg L		Lua state
  * @arg flags	flags from link
  */
-void create_flags_hash(lua_State *L, unsigned int flags) {
+static void create_flags_hash(lua_State *L, unsigned int flags) {
 	int 				i;
 	unsigned int		mask = 1;
 	char				buf[256];
@@ -67,9 +72,11 @@ void create_flags_hash(lua_State *L, unsigned int flags) {
  * @arg action		is it "add", "change" or "delete"
  * @arg link		the link object
  */
-void callback_lua_link(lua_State *L, int fid, struct rtnl_link *link, char *action) {
+static void callback_lua_link(lua_State *L, int fid, struct rtnl_link *link, char *action) {
 	int					index = rtnl_link_get_ifindex(link);
 	char				buf[256];
+
+	if(fid == 0) return;		// no callback provided
 
     get_function(L, fid);
     if(!lua_isfunction(L, -1)) {
@@ -81,18 +88,6 @@ void callback_lua_link(lua_State *L, int fid, struct rtnl_link *link, char *acti
 	lua_pushstring(L, nl_llproto2str(rtnl_link_get_arptype(link), buf, sizeof(buf)));
 	lua_pushstring(L, action);
     lua_call(L, 4, 0);
-}
-
-void callback_lua_nl(lua_State *L, int fid, int index, char *type, char *name, char *action) {
-    get_function(L, fid);
-    if(!lua_isfunction(L, -1)) {
-        fprintf(stderr, "callback_lua_nl: invalid function for callback\n");
-        return;
-    }
-	lua_pushnumber(L, index);
-    lua_pushstring(L, name);
-    lua_pushstring(L, action);
-    lua_call(L, 3, 0);
 }
 
 /**
@@ -116,7 +111,7 @@ static void add_link_to_lua(lua_State *L, struct rtnl_link *link) {
 	// Get the links table...
 	lua_getglobal(L, "nl_links");
 
-	// See if we have the index already...
+	// See if we have the index already... if not, new table
 	lua_rawgeti(L, -1, index);
 	if(lua_isnil(L, -1)) { lua_pop(L, 1); lua_newtable(L); }
 	
@@ -163,6 +158,8 @@ static char *addr2str(struct nl_addr *addr, char *buf, size_t size) {
  * Add/modify addr details within the "nl_addrs" table
  * @arg L			Lua state
  * @arg addr		Netlink rtnl_addr object
+ *
+ * TODO: not right yet!
  */
 static void add_addr_to_lua(lua_State *L, struct rtnl_addr *addr) {
 	char			buf[256];
@@ -214,9 +211,9 @@ static void remove_link_from_lua(lua_State *L, struct rtnl_link *link) {
 /*
  * This callback is used for any dynamic changes for the link
  * cache (i.e. after the system has started up and got through the
- * initial list
+ * initial list)
  */
-void	cb_link_dynamic(struct nl_cache *cache, struct nl_object *obj, int action, void *arg) {
+static void cb_link_dynamic(struct nl_cache *cache, struct nl_object *obj, int action, void *arg) {
 	lua_State			*L = (lua_State *)arg;
 	struct rtnl_link	*link = (struct rtnl_link *)obj;
 
@@ -236,12 +233,11 @@ void	cb_link_dynamic(struct nl_cache *cache, struct nl_object *obj, int action, 
 	}
 }
 
-
 /**
  * This is the callback used when iterating over the initial list
  * of interfaces
  */
-void	cb_link_initial(struct nl_object *obj, void *arg) {
+static void cb_link_initial(struct nl_object *obj, void *arg) {
 	lua_State			*L = (lua_State *)arg;
 	struct rtnl_link	*link = (struct rtnl_link *)obj;
 
@@ -252,14 +248,14 @@ void	cb_link_initial(struct nl_object *obj, void *arg) {
 /**
  * Callback for initial interation over the address cache
  */
-void cb_addr_initial(struct nl_object *obj, void *arg) {
+static void cb_addr_initial(struct nl_object *obj, void *arg) {
 	lua_State			*L = (lua_State *)arg;
 	struct rtnl_addr	*addr = (struct rtnl_addr *)obj;
 	
 	fprintf(stderr, "address cache initial: %p\n", obj);
 	add_addr_to_lua(L, addr);
 }
-void cb_addr_dynamic(struct nl_cache *cache, struct nl_object *obj, int action, void *arg) {
+static void cb_addr_dynamic(struct nl_cache *cache, struct nl_object *obj, int action, void *arg) {
 	//lua_State			*L = (lua_State *)arg;
 
 	fprintf(stderr, "address cache dynamic: %p (action=%d)\n", obj, action);
@@ -269,24 +265,11 @@ void cb_addr_dynamic(struct nl_cache *cache, struct nl_object *obj, int action, 
  * Rename an interface: we will lookup the old interface then
  * create a change object and action the change
  */
-int netlink_if_rename(lua_State *L) {
+static int netlink_if_rename(lua_State *L) {
 	struct rtnl_link	*old, *new;
-	struct nl_sock		*nls;
 
 	char    *oldname = (char *)luaL_checkstring(L, 1);
 	char    *newname = (char *)luaL_checkstring(L, 2);
-
-	nls = nl_socket_alloc();
-	if(!nls) {
-		fprintf(stderr, "unable to alloc sock\n");
-		lua_pushnumber(L, 1);
-		return 1;
-	}
-	if(nl_connect(nls, NETLINK_ROUTE) != 0) {
-		fprintf(stderr, "unable to connect\n");
-		lua_pushnumber(L, 1);
-		return 1;
-	}
 
 	old = rtnl_link_get_by_name(cache_link, oldname);
 	if(!old) {
@@ -310,25 +293,8 @@ int netlink_if_rename(lua_State *L) {
 	rtnl_link_put(old);
 	rtnl_link_put(new);
 
-
 	lua_pushnumber(L, 0);
 	return 1;
-}
-
-/**
- * Initialise the netlink system
- * 
- * @return netlink file handle
- */
-int netlink_init() {
-	int fd;
-	int rc;
-
-	rc = nl_cache_mngr_alloc(NULL, NETLINK_ROUTE, NL_AUTO_PROVIDE, &mngr);
-	fprintf(stderr, "rc=%d\n", rc);
-
-	fd = nl_cache_mngr_get_fd(mngr);
-	return fd;
 }
 
 /**
@@ -338,7 +304,7 @@ int netlink_init() {
  *
  * @return			Number of return values (always zero)
  */
-int netlink_watch_link(lua_State *L, int fid_add, int fid_mod, int fid_del) {
+static int netlink_watch_link(lua_State *L, int fid_add, int fid_mod, int fid_del) {
 	int rc;
 
 	// Create a new global table for the links
@@ -368,7 +334,7 @@ int netlink_watch_link(lua_State *L, int fid_add, int fid_mod, int fid_del) {
  *
  * @return			Number of return values (always zero)
  */
-int netlink_watch_addr(lua_State *L, int fid_add, int fid_mod, int fid_del) {
+static int netlink_watch_addr(lua_State *L, int fid_add, int fid_mod, int fid_del) {
 	int rc;
 
 	// Create a new global table for the links
@@ -395,7 +361,7 @@ int netlink_watch_addr(lua_State *L, int fid_add, int fid_mod, int fid_del) {
  * This needs to be called whenever there is data to be read
  * so that we can process waiting notifications
  */
-int netlink_read(lua_State *L, int fd) {
+static int netlink_read(lua_State *L, int fd) {
 	int rc;
 	fprintf(stderr, "netlink FD=%d\n", fd);
 
@@ -404,3 +370,90 @@ int netlink_read(lua_State *L, int fd) {
 
 	return 0;
 }
+
+/*==============================================================================
+ * Allow us to monitor netlink related stuff...
+ *==============================================================================
+ */
+static int monitor_netlink(lua_State *L) {
+	int		fids[3];
+	int		i;
+
+	// Check arguments (netlink type, callback)
+	char    *nltype = (char *)luaL_checkstring(L, 1);
+	for(i=2; i < 5; i++) {
+		fids[i-2] = 0;
+		if(lua_isnoneornil(L, i)) continue;
+		if(!lua_isfunction(L, i)) return luaL_error(L, "expected function as argument #%d", i);
+		lua_pushvalue(L, i);
+		fids[i-2] = store_function(L);
+	}
+
+	// Do the right thing
+	if(strcmp(nltype, "link") ==0 ) {
+		netlink_watch_link(L, fids[0], fids[1], fids[2]);
+	} else if(strcmp(nltype, "addr") == 0) {
+		netlink_watch_addr(L, fids[0], fids[1], fids[2]);
+	} else {
+		for(i=0; i < 3; i++) free_function(L, fids[i]);
+		return luaL_error(L, "unknown netlink type: %s", nltype);
+	}
+	lua_pushnumber(L, 0);
+	return 1;
+}
+
+/*==============================================================================
+ * Provide our service data for the unit_service module
+ *==============================================================================
+ */
+static int get_service(lua_State *L) {
+    u_svc.fd = nl_cache_fd;
+    u_svc.read_func = netlink_read;
+	u_svc.write_func = NULL;
+
+    lua_pushlightuserdata(L, (void *)&u_svc);
+    return 1;
+}
+
+/*==============================================================================
+ * These are the functions we export to Lua...
+ *==============================================================================
+ */
+static const struct luaL_reg lib[] = {
+	{"monitor_netlink", monitor_netlink},
+	{"if_rename", netlink_if_rename},
+
+	// Service descriptor...
+	{"get_service", get_service},
+	{NULL, NULL}
+};
+
+/*------------------------------------------------------------------------------
+* Main Library Entry Point ... setup netlink and then intialise all the 
+* Lua functions
+*------------------------------------------------------------------------------
+*/
+int luaopen_netlink(lua_State *L) {
+	int	rc;
+
+	// Initialise the library...
+	luaL_openlib(L, "netlink", lib, 0);
+
+	// Create the netlink cache manager...
+	rc = nl_cache_mngr_alloc(NULL, NETLINK_ROUTE, NL_AUTO_PROVIDE, &mngr);
+	fprintf(stderr, "rc=%d\n", rc);
+	nl_cache_fd = nl_cache_mngr_get_fd(mngr);
+
+	// Create the ad-hoc netlink connection...
+	nls = nl_socket_alloc();
+	if(!nls) {
+		fprintf(stderr, "unable to alloc sock\n");
+		return 0;
+	}
+	if(nl_connect(nls, NETLINK_ROUTE) != 0) {
+		fprintf(stderr, "unable to connect\n");
+		return 0;
+	}
+	return 1;
+}
+
