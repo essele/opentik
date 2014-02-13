@@ -20,7 +20,7 @@
 #include <linux/sockios.h>
 #include <linux/if_tunnel.h>
 
-#include "unit_service.h"
+#include "unit.h"
 
 struct		unit_service_desc	us;
 

@@ -11,7 +11,7 @@
 #include <netlink/route/link.h>
 #include <netlink/route/addr.h>
 #include "luafuncs.h"
-#include "unit_service.h"
+#include "unit.h"
 
 /*
  * This module provides basic netlink functionality so that we can 
@@ -447,9 +447,12 @@ int luaopen_netlink(lua_State *L) {
     u_svc.fd = nl_cache_fd;
     u_svc.read_func = netlink_read;
 	u_svc.write_func = NULL;
+	u_svc.need_write_func = NULL;
 
 	// And register...
+	fprintf(stderr, "b4reg\n");
 	register_service(L, &u_svc);
+	fprintf(stderr, "afreg\n");
 	return 1;
 }
 

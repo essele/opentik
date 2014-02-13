@@ -11,7 +11,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 
-#include "unit_service.h"
+#include "unit.h"
 #include "filewatch.h"
 #include "luafuncs.h"
 
@@ -429,6 +429,7 @@ int luaopen_filewatch(lua_State *L) {
 	u_svc.fd = inotify_init();
 	u_svc.read_func = filewatch_read;
 	u_svc.write_func = NULL;
+	u_svc.need_write_func = NULL;
 
 	// And register...
     register_service(L, &u_svc);

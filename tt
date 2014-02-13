@@ -17,7 +17,12 @@ print("XXXXXXXX -- "..arg[0])
 
 require("unit")         -- main support library
 require("tunnel")
+print("A")
 require("netlink")
+print("B")
+
+require("mosquitto")
+
 require("filewatch")
 
 --tunnel.tt()
@@ -42,7 +47,7 @@ end
 print("REG: " .. tostring(__unit_register))
 
 
-unit.subscribe("/fred", lee);
+mosquitto.subscribe("/fred", lee);
 --unit.publish("/fred", "hello", true);
 
 --unit.add_service(filewatch.get_service())

@@ -1,44 +1,43 @@
 
 MOSDIR_I="/home/essele/dev/opentik/mosquitto-1.2.3/lib"
 MOSDIR_L="/home/essele/dev/opentik/mosquitto-1.2.3/lib"
-LUADIR_I="/home/essele/dev/opentik/luajit-2.0/src"
+LUADIR				= /home/essele/dev/opentik/luajit-2.0/src
 
-LDFLAGS=-L$(MOSDIR_L) -lmosquitto -lpthread -lrt -lnl-3 -lnl-route-3
-CFLAGS=-I$(MOSDIR_I) -I$(LUADIR_I) -I/usr/include/libnl3
+CFLAGS				= -I$(LUADIR)
+LDFLAGS				= -L$(LUADIR)
 
-DEPS=serialize.h filewatch.h luafuncs.h netlink.h tunnel.h unit_service.h
+#
+# Special per-file C and LD FLAGS
+#
+CFLAGS_mosquitto.o		= -I$(MOSDIR_I) 
+LDFLAGS_mosquitto.so 	= -L$(MOSDIR_L) -lmosquitto -lpthread -lrt
 
-UNITOBJS=unit.o unit_service.o serialize.o 
-UNITLIB=unit.so
+CFLAGS_netlink.o		= -I/usr/include/libnl3
+LDFLAGS_netlink.so		= -lnl-3 -lnl-route-3
 
-NLOBJS=netlink.o
-NLLIB=netlink.so
 
-TUNNELOBJS=tunnel.o
-TUNNELLIB=tunnel.so
+%.so:	%.o
+	$(CC) -shared -o $@ $(CFLAGS) $(CFLAGS_$@) $(LDFLAGS) $(LDFLAGS_$@) $^
 
-FWOBJS=filewatch.o
-FWLIB=filewatch.so
+%.o:	%.c %.d
+	$(CC) -c -Wall -Werror -fpic -o $@ $(CFLAGS) $(CFLAGS_$@) $<
 
-LIBS=$(UNITLIB) $(NLLIB) $(TUNNELLIB) $(FWLIB)
+%.d:	%.c
+	$(CC) -MM $*.c > $@
 
-all:	$(LIBS)
+#
+# All of the LIBS we wan to build
+#
+LIBS				= netlink.so mosquitto.so filewatch.so unit.so tunnel.so
 
-$(UNITLIB):	$(UNITOBJS)
-	gcc -shared -o $(UNITLIB) $(UNITOBJS) $(LDFLAGS)
-
-$(NLLIB):	$(NLOBJS)
-	gcc -shared -o $(NLLIB) $(NLOBJS) $(LDFLAGS)
-
-$(FWLIB):	$(FWOBJS)
-	gcc -shared -o $(FWLIB) $(FWOBJS) $(LDFLAGS)
-
-$(TUNNELLIB):	$(TUNNELOBJS)
-	gcc -shared -o $(TUNNELLIB) $(TUNNELOBJS) $(LDFLAGS)
-
-%.o:	%.c $(DEPS)
-	gcc -c -Wall -Werror -fpic -o $@ $< $(CFLAGS)
-
+all:				$(LIBS)
 clean:
-	rm $(LIBS) $(UNITOBJS) $(NLOBJS) $(TUNNELOBJS) $(FWOBJS)
+	rm *.o *.so
+
+#
+# If a lib has more than one object...
+#
+mosquitto.so:		mosquitto.o serialize.o
+
+
 

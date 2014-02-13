@@ -1,128 +1,120 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#include <sys/select.h>
 #include <lua.h>
 #include <lauxlib.h>
 #include <lualib.h>
-#include "serialize.h"
-#include "mosquitto.h"
-#include "filewatch.h"
 #include "luafuncs.h"
-#include "netlink.h"
-#include "unit_service.h"
+#include "unit.h"
+
+/*==============================================================================
+ *
+ * The UNIT is the core "module" concept, we provide a mechanism for registering
+ * other services and using an event loop to call out to those other things.
+ * 
+ * Other modules self-register at load time.
+ *
+ *==============================================================================
+ */
+
 
 /*
- * We keep a reference to the mosquitto struct so we don't have
- * to keep doing lookups ... this will limit us to one instance
+ * The Globals (local to this module)
  */
-struct mosquitto 	*mosq = 0;
-int					fw_fd = 0;		// inotify_fd
-int					nl_fd = 0;		// netlink_fd
+static struct unit_service_desc		**services = NULL;			// Our list of services
+static int 							service_slots = 0;			// How many allocated slots
+static fd_set						m_read;						// Master read fds
+static int							max_fd = 0;					// How many fd's for select
 
-/*==============================================================================
- * Handle incoming messages
- *
- * Lookup the function from the _topic_callbacks table and call it with the
- * unserialized data
- *==============================================================================
+/*
+ * Given a service descriptor as an arg, add it to our
+ * service list and prepare the fdsets for select
  */
-static void message_callback(struct mosquitto *m, void *obj, const struct mosquitto_message *msg) {
-	lua_State 	*L = (lua_State *)obj;
+static int unit_register(struct unit_service_desc *us) {
+	struct unit_service_desc	**p = NULL;
+	int							i;
 
-	fprintf(stderr, "callback\n");
-
-	lua_getglobal(L, "_topic_callbacks");
-	if(!lua_istable(L, -1))
-		luaL_error(L, "missing callbacks table, did you call init()?");
-
-	fprintf(stderr, "1\n");
-	lua_pushstring(L, msg->topic);	
-	lua_rawget(L, -2);
-	if(!lua_isfunction(L, -1)) {
-		fprintf(stderr, "WARN: no callback for topic [%s]\n", msg->topic);
-		lua_pop(L, 2);
-		return;
+	// See if we have a free slot...
+	for(i=0; i < service_slots; i++) {
+		fprintf(stderr, "   >> slot %d = %p\n", i, services[i]);
+		if(services[i] == NULL) { p = services+i; break; }
 	}
-	fprintf(stderr, "2\n");
-	lua_pushstring(L, msg->topic);
-	if(!unserialize(L, msg->payload)) {
-		fprintf(stderr, "WARN: unable to unserialize\n");
-		lua_pop(L, 3);
-		return;
+	// Allocate space for the extra service if we need it...
+	if(!p) {
+		services = realloc(services, sizeof(struct unit_service_desc *) * (service_slots+1));
+		p = services + service_slots;
+		service_slots++;
 	}
-	fprintf(stderr, "3\n");
-	lua_call(L, 2, 0);
-	// Pop the table...
-	lua_pop(L, 1);
+	*p = us;
+
+	// Update our master read fdset and max_fd
+	if(us->read_func) FD_SET(us->fd, &m_read);
+	if(us->fd > max_fd) max_fd = us->fd;
+	
+	fprintf(stderr, "service add p=%p\n", p);
+	return 0;
 }
 
-/*==============================================================================
- * Subscribe to a topic...
- *==============================================================================
+/*
+ * Service Loop - we handle the mosquitto stuff here anyway, anything else
+ * is a specifically added service.
  */
-static int subscribe(lua_State *L) {
-	char    *topic = (char *)luaL_checkstring(L, 1);
-	int		rc;
+int service_loop(lua_State *L) {
+	fd_set				fds_rd, fds_wr;
+	struct timeval		tv;
+	int					i;
+	int					rc;
 
-	luaL_checktype(L, 2, LUA_TFUNCTION);
+	tv.tv_sec = 0;
+	tv.tv_usec = 1000*1000;
 
-	// Populate the callbacks table...
-	lua_getglobal(L, "_topic_callbacks");
-	if(!lua_istable(L, -1))
-		return luaL_error(L, "missing callbacks table, did you call init()?");
+	fprintf(stderr, "service_loop()\n");
 
-	// Push the key, then value ... and then set!
-	lua_pushvalue(L, 1);
-	lua_pushvalue(L, 2);
-	lua_settable(L, -3);
-	// Pop the table...
-	lua_pop(L, 1);
+	// Our read set is simply the master set...
+	fds_rd = m_read;
 
-	// Actually subscribe now...
-	rc = mosquitto_subscribe(mosq, NULL, topic, 0);
-	if(rc != MOSQ_ERR_SUCCESS) 
-		return luaL_error(L, "unable to subscribe (err=%d)", rc);
+	// Write is harder, we need to check
+	FD_ZERO(&fds_wr);
+	for(i=0; i < service_slots; i++) {
+		struct unit_service_desc *s = services[i];
+		if(s->need_write_func && s->need_write_func(L, s->fd)) FD_SET(s->fd, &fds_wr);
+	}
+//	fds_wr = m_write;
 
-	lua_pushnumber(L, 0);
+//	if(mosquitto_want_write(mosq)) FD_SET(mosq_fd, &fds_wr);
+
+	rc = select(max_fd+1, &fds_rd, &fds_wr, NULL, &tv);
+	fprintf(stderr, "select rc=%d\n", rc);
+
+	if(rc == 0) {
+		// Timeout... run mosquitto housekeeping
+//		rc = mosquitto_loop_misc(mosq);
+//		fprintf(stderr, "mlmisc: %d\n", rc);
+	} else {
+		// Now we can look at extra services
+		for(i=0; i < service_slots; i++) {
+			struct unit_service_desc *s = services[i];
+			if(FD_ISSET(s->fd, &fds_rd) && s->read_func) {
+				rc = s->read_func(L, s->fd);
+				fprintf(stderr, "service(fh=%d): read rc=%d\n", s->fd, rc);
+			}
+			if(FD_ISSET(s->fd, &fds_wr) && s->write_func) {
+				rc = s->write_func(L, s->fd);
+				fprintf(stderr, "service(fh=%d): write rc=%d\n", s->fd, rc);
+			}
+		}
+	}
+	lua_pushnumber(L, rc);
 	return 1;
-}
-
-/*==============================================================================
- * Publish a variable as a topic
- *
- * publish(topic, variable, bool-persist)
- *==============================================================================
- */
-static int publish(lua_State *L) {
-	int		len, rc;
-	char    *topic = (char *)luaL_checkstring(L, 1);
-	char	*data;
-	bool	persist = false;
-
-	luaL_checkany(L, 2);		// need the variable we are serializing
-	data = serialize(L, 2, &len);
-	if(lua_toboolean(L, 3) == 1) persist = true;
-
-	fprintf(stderr, "TOPIC: %s\n", topic);
-	fprintf(stderr, "DATA: %s\n", data);
-	fprintf(stderr, "LEN: %d\n", len);
-
-	rc = mosquitto_publish(mosq, NULL, (char *)topic, len, (char *)data, 0, persist);	
-	free(data);
-	if(rc != MOSQ_ERR_SUCCESS) 
-		return luaL_error(L, "unable to publish (err=%d)", rc);
-
-	lua_pushnumber(L, 0);
-	return 1;
-}
+} 
 
 /*==============================================================================
  * These are the functions we export to Lua...
  *==============================================================================
  */
 static const struct luaL_reg lib[] = {
-	{"subscribe", subscribe},
-	{"publish", publish},
 	{"service_loop", service_loop},
 	{NULL, NULL}
 };
@@ -134,47 +126,16 @@ static const struct luaL_reg lib[] = {
  *------------------------------------------------------------------------------
  */
 int luaopen_unit(lua_State *L) {
-	const char	*unitname;
-	char		*p;
-	int			rc;
-
 	// Initialise the library...
 	luaL_openlib(L, "unit", lib, 0);
 
-	// Work out what our unit name is from arg[0] (basename)
-	lua_getglobal(L, "arg");
-	lua_rawgeti(L, -1, 0);
-	if(!lua_isstring(L, -1)) return luaL_error(L, "global variable arg[0] needs to be set with name");
-	unitname = lua_tostring(L, -1);
-	p = strrchr(unitname, '/'); 		// look for last slash
-	if(p) unitname = p+1;
-	lua_pop(L, 1);						// remove the arg table
+	// Setup the fdset
+	FD_ZERO(&m_read);
+	max_fd = 0;
 
-	fprintf(stderr, "UNIT is %s\n", unitname);	
-
-	// Initialise and create new mosquitto session...
-	mosquitto_lib_init();
-	mosq = mosquitto_new(unitname, true, (void *)L);
-	if(!mosq) return luaL_error(L, "unable to create new mosquitto session.");
-
-	// Connect to localhost...
-	rc = mosquitto_connect(mosq, "localhost", 1883, 10);
-	if(rc != MOSQ_ERR_SUCCESS) {
-		if(rc == MOSQ_ERR_INVAL) {
-			return luaL_error(L, "unable to connect to message broker: invalid args");
-		} else {
-			return luaL_error(L, "unable to connect to message broker (err=%d): %s", 
-									rc, strerror(errno));	
-		}
-	}
-	mosquitto_message_callback_set(mosq, message_callback);
-
-	// Create the _topic_callbacks table...
-	lua_newtable(L);
-	lua_setglobal(L, "_topic_callbacks");
-
-	// Initialise the service handler, and let it know about mosquitto...
-	service_init(L, mosq);
+	// Allow other modules to register services
+    lua_pushlightuserdata(L, (void *)&unit_register);
+    lua_setglobal(L, "__unit_register");
 
 	return 1;
 }
