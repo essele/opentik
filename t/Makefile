@@ -1,5 +1,9 @@
 
+LIBS=tunnel.so fred.so
 
+DEPS_tunnel=hello
 
-tunnnel: tunnel.c
-	gcc -o tunnel tunnel.c
+$(LIBS) : %.so : %.o
+	$(CC) -o $@ $< -I $(DEPS_$*)/fred $(CFLAGS)
+
+all: $(LIBS)
