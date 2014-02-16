@@ -16,14 +16,7 @@ package.cpath = OT_LIBS..";/usr/lib/lua/5.1/?.so"
 print("XXXXXXXX -- "..arg[0])
 
 require("unit")         -- main support library
-require("tunnel")
-print("A")
 require("netlink")
-print("B")
-
-require("mosquitto")
-
-require("filewatch")
 
 --tunnel.tt()
 
@@ -47,12 +40,11 @@ end
 print("REG: " .. tostring(__unit_register))
 
 
-mosquitto.subscribe("/fred", lee);
+--mosquitto.subscribe("/fred", lee);
 --unit.publish("/fred", "hello", true);
 
 --unit.add_service(filewatch.get_service())
 
---netlink.monitor_netlink("link", cb_interface_add)
 
 --filewatch.monitor_file("/tmp/lee", cb_f)
 
@@ -63,10 +55,22 @@ mosquitto.subscribe("/fred", lee);
 --print("X is "..tostring(x))
 
 --unit.add_service(x)
+--
 
+--netlink.watch("link", cb_interface_add)
 
-while(1) do
-	unit.service_loop()
-end
+--netlink.tunnel_probe_and_rename("gre")
+
+--netlink.tunnel_create("tunlee", "gre", "10.4.5.6", "10.6.7.8");
+
+netlink.if_set("tunlee", "up")
+netlink.if_set("tunlee", "mtu", 1376)
+netlink.if_set("tunlee", "down")
+netlink.if_set("tunlee", "name", "XXtong")
+netlink.if_set("XXtong", "up")
+
+--while(1) do
+--	unit.service_loop()
+--end
 
 

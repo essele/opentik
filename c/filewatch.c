@@ -341,6 +341,7 @@ int filewatch_read(lua_State *L, int fd) {
 		} else {
 			// This should be a modify event for a file...
 			// TODO: support WRITE_CLOSE...
+			// TODO: logwatch isn't complete yet
 			if(fwdata->fw_type == FW_LOG) {
 				filewatch_log_call(L, fwdata);
 				continue;

@@ -1,0 +1,25 @@
+#!./luajit
+
+
+function greet(name, sex, married)
+	local salutation
+
+	if(sex == "male") then
+		salutation = "Mr"
+	elseif(married) then
+		salutation = "Mrs"
+	else
+		salutation = "Miss"
+	end
+
+	print("Hello " .. salutation .. " " .. name)
+		
+end
+
+
+
+greet("Charlotte", "female", false)
+
+greet("Georgina", "female", true)
+
+greet("Lee", "male", true)

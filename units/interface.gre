@@ -25,35 +25,58 @@ DEF["interface/gre"] = {
 	}
 }
 
+--
+-- When we start there are two scenarios ...
+-- 
+-- 1. We are a fresh start and no gre interfaces exist, in which
+--    case we need to probe the gre0 interface and then rename it.
+--
+-- 2. We are a restart and gre stuff already exists. In which
+--    case we don't need to worry about it
+--
+-- We can tell by searching for the gre interface that is non
+-- pointotpoint and checking it's name
+--
+local gre0_renamed = false
 
 --
--- If we get a new interface then we need to check if it's the
--- initial "extra" gre interface so that we can rename it. We know
--- that this will only happen once and anything subsequent will be
--- a valid tunnel.
+-- This is called whenever netlink finds a new gre interface.
+-- 
+-- If we haven't renamed gre0 to __gre then we aren't interested
+-- since we are going to be renaming and we don't care about it.
 --
+-- If we have renamed then it must be a newly created interface
+-- OR one we had hanging around during a restart.
 --
-local gre_dummy_seen = false
 
 function CB.gre.if_pre_add(index, name)
+	-- We don't care about the non point-to-point interface
+	-- since it's probably gre0 or __gre
+	if(not nl_links[index].flags.pointopoint) then print("IGNORING: "..name) return "ignore" end
 
-	-- If we see __gre0 then we know we have already done the rename
-	-- and we must have restarted.
-	if(name == "__gre") then
-		gre_dummy_seen = true
-		return "ignore"
-	end
-
-	-- If we haven't seen gre0 then we can rename it and set
-	-- the flag.
-	if(name == "gre0" and not gre_dummy_seen) then
-		print("NEED TO RENAME GRE0 TO __GRE")
-		gre_dummy_seen = true
-		return "ignore"
-	end
-	
 	print("IN GRE PRE ADD")
 end
+
+--
+-- If we take a config live where it wasn't valid before then
+-- it is effectively a new interface. 
+--
+-- If we have restarted then it's possible the interface is
+-- still hanging around, but that shouldn't be a problem as
+-- we will match when the interfaces are enumerated.
+--
+
+function CB.gre.if_config_new(config)
+	-- If we haven't done the gre0 rename yet then we need to...
+	if(not gre0_renamed) then netlink.tunnel_probe_and_rename("gre") gre0_renamed = true end
+
+	-- Create the interface...
+	netlink.tunnel_create(config.name, "gre", config.local, config.remote)
+	-- TODO: check the error code
+
+end
+
+
 
 print("YEPYE")
 

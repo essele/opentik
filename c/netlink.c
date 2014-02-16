@@ -5,11 +5,23 @@
 #include <lauxlib.h>
 #include <lualib.h>
 #include <arpa/inet.h>
+#include <netinet/ip.h>
+#include <net/if_arp.h>
 #include <netlink/netlink.h>
 #include <netlink/cache.h>
 #include <netlink/route/rtnl.h>
 #include <netlink/route/link.h>
 #include <netlink/route/addr.h>
+
+
+#include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+
+#include <linux/sockios.h>
+#include <linux/if_tunnel.h>
+
+#include "netlink.h"
 #include "luafuncs.h"
 #include "unit.h"
 
@@ -31,6 +43,7 @@ static struct nl_cache_mngr	*mngr;
 static struct nl_cache		*cache_link;
 static struct nl_cache		*cache_addr;
 static int					nl_cache_fd;		// cache stuff
+static int					dgram_fd;			// for tunnel stuff
 static int					fid_link_add, fid_link_mod, fid_link_del;
 static int					fid_addr_add, fid_addr_mod, fid_addr_del;
 
@@ -43,6 +56,12 @@ static int					fid_addr_add, fid_addr_mod, fid_addr_del;
 #define NL_ACT_GET		3
 #define NL_ACT_SET		4
 #define NL_ACT_CHANGE	5
+
+/*
+ * Handy macro to make code easier to read
+ */
+#define IS(i,v)	(strcmp(i,v)==0)
+
 
 /**
  * Convert a set of flags into a hash of keys where the value is 1
@@ -58,7 +77,7 @@ static void create_flags_hash(lua_State *L, unsigned int flags) {
 	for(i=0; i < 24; i++) {
 		if(flags & mask) {
 			lua_pushstring(L, rtnl_link_flags2str(mask, buf, sizeof(buf)));
-			lua_pushnumber(L, 1);
+			lua_pushboolean(L, 1);
 			lua_rawset(L, -3);
 		}
 		mask <<= 1;
@@ -261,18 +280,182 @@ static void cb_addr_dynamic(struct nl_cache *cache, struct nl_object *obj, int a
 	fprintf(stderr, "address cache dynamic: %p (action=%d)\n", obj, action);
 }
 
+/*
+ * For tunnel devices the first one (i.e. gre0) is the master devices that can't be used
+ * for a tunnel but it used to create all the others. We need to probe to get it, then
+ * rename it so we can use gre0 as a real tunnel.
+ */
+int tunnel_probe_and_rename(lua_State *L) {
+	struct rtnl_link		*old = NULL, *new = NULL;
+	int						rval = 0, rc;
+	struct ip_tunnel_parm   tp;
+	struct ifreq			ifr;
+	char					base_device[IFNAMSIZ], 	new_device[IFNAMSIZ];
+	char					*type = (char *)luaL_checkstring(L, 1);
+
+	snprintf(base_device, IFNAMSIZ, "%s0", type);
+	snprintf(new_device, IFNAMSIZ, "__%s", type);
+
+	// We first check to see if we already have new_device (i.e. __gre)
+	if(rtnl_link_get_kernel(nls, 0, new_device, &old) == 0) {
+		rtnl_link_put(old);
+		lua_pushnumber(L, 1); 
+		return 1;
+	}
+
+	// Setup the structures ready to probe the interface...
+	memset(&tp, 0, sizeof(struct ip_tunnel_parm));
+	strcpy(ifr.ifr_name, base_device);
+	ifr.ifr_ifru.ifru_data = (void *)&tp;
+	
+	// Do the actual probe...
+	if(!ioctl(dgram_fd, SIOCGETTUNNEL, &ifr)) {
+		fprintf(stderr, "unable to SIOCGETTUNNEL\n"); 
+		goto finish;
+	}
+
+	// Now see if we have gre0 as a non-pointopoint...
+	if(rtnl_link_get_kernel(nls, 0, base_device, &old) != 0) {
+		fprintf(stderr, "gre0 does not exist, this really doesn't make sense\n");
+		goto finish;
+	}
+	if(rtnl_link_get_flags(old) & IFF_POINTOPOINT) {
+		fprintf(stderr, "gre0 is a pointopoint interface, aaarrrggghh!\n");
+		goto finish;
+	}
+
+	// Allocate a new link to change the name...
+	if(!(new = rtnl_link_alloc())) {
+		fprintf(stderr, "unable to create new link object");
+		goto finish;
+	}
+
+	// Set the naem, and action the change...
+	rtnl_link_set_name(new, new_device);
+	fprintf(stderr, "about to try change");
+	
+	if(!(rc = rtnl_link_change(nls, old, new, 0))) {
+		fprintf(stderr, "change returned %d\n", rc);
+		goto finish;
+	}
+	rval = 1;
+
+finish:
+	// Free the objects...
+	if(old) rtnl_link_put(old);
+	if(new) rtnl_link_put(new);
+
+	// Return...
+	lua_pushnumber(L, rval);	
+	return 1;
+}
+
+/*
+ * To create a tunnel we need a name, a type, local and remote addresses 
+ * and some flags
+ */
+int tunnel_create(lua_State *L) {
+    int                     rc;
+    struct ip_tunnel_parm   tp;
+    struct ip_tunnel_parm   *p = &tp;
+    struct ifreq            ifr;
+
+	char					*name = (char *)luaL_checkstring(L, 1);
+	char					*type = (char *)luaL_checkstring(L, 2);
+	char					*local = (char *)luaL_checkstring(L, 3);
+	char					*remote = (char *)luaL_checkstring(L, 4);
+
+	// Clear out and setup our structure...
+    memset(p, 0, sizeof(struct ip_tunnel_parm));
+    ifr.ifr_ifru.ifru_data = (void *)p;
+
+	// Populate based on type...	
+	if(IS(type, "gre")) {
+		strcpy(ifr.ifr_name, "__gre");
+		p->iph.protocol = IPPROTO_GRE;
+	} else if(IS(type, "ipip")) {
+		strcpy(ifr.ifr_name, "__ipip");
+		p->iph.protocol = IPPROTO_IPIP;
+	} else 
+		return luaL_error(L, "unknown tunnel type: %s", type);
+	
+	// Generic settings...
+	p->iph.version = 4;
+	p->iph.ihl = 5;
+	p->iph.frag_off = htons(IP_DF);
+
+	// The name and addresses...
+	strcpy(p->name, name);
+	p->iph.saddr = inet_addr(local);
+	p->iph.daddr = inet_addr(remote);
+
+	// Do it...
+    if(!(rc = ioctl(dgram_fd, SIOCADDTUNNEL, &ifr))) {
+		fprintf(stderr, "tunnel_create: ioctl SIOCADDTUNNEL failed (rc=%d)\n", rc);
+		lua_pushnumber(L, 0);
+		return 1;
+	}
+	// We succeeded
+	lua_pushnumber(L, 1);
+	return 1;
+}
+
+/**
+ * Set an interface mtu value
+ */
+static int if_set(lua_State *L) {
+	struct rtnl_link	*delta = rtnl_link_alloc();
+	struct rtnl_link	*intf = NULL;
+	char				*interface = (char *)luaL_checkstring(L, 1);
+	char				*item = (char *)luaL_checkstring(L, 2);
+	int					rc = 0;
+
+	if(rtnl_link_get_kernel(nls, 0, interface, &intf) != 0) {
+		fprintf(stderr, "%s: cant get interface details: %s\n", __func__, interface);
+		goto finish;
+	}
+	if(!delta) return luaL_error(L, "%s: unable to rtnl_link_alloc()", __func__);
+
+	if(IS(item, "up")) {
+		rtnl_link_set_flags(delta, IFF_UP);
+	} else if(IS(item, "down")) {
+		rtnl_link_unset_flags(delta, IFF_UP);
+	} else if(IS(item, "mtu")) {
+		rtnl_link_set_mtu(delta, luaL_checkint(L, 3));
+	} else if(IS(item, "name")) {
+		rtnl_link_set_name(delta, luaL_checkstring(L, 3));
+	}
+
+	// Make the change...
+	if(rtnl_link_change(nls, intf, delta, 0) != 0) {
+		fprintf(stderr, "%s: unable to make interface change\n", __func__);
+		goto finish;
+	}
+	rc = 1;
+
+finish:
+	// Free the objects...
+	if(intf) rtnl_link_put(intf);
+	if(delta) rtnl_link_put(delta);
+
+	// Push the result and return...
+	lua_pushnumber(L, rc);
+	return 1;
+}
+
+
 /**
  * Rename an interface: we will lookup the old interface then
  * create a change object and action the change
  *
  * TODO: If the interface is up, then we need to take it down before
- *       we attempt a rename.
+ *	   we attempt a rename.
  */
 static int netlink_if_rename(lua_State *L) {
 	struct rtnl_link	*old, *new;
 
-	char    *oldname = (char *)luaL_checkstring(L, 1);
-	char    *newname = (char *)luaL_checkstring(L, 2);
+	char	*oldname = (char *)luaL_checkstring(L, 1);
+	char	*newname = (char *)luaL_checkstring(L, 2);
 
 	old = rtnl_link_get_by_name(cache_link, oldname);
 	if(!old) {
@@ -383,7 +566,7 @@ static int watch_netlink(lua_State *L) {
 	int		i;
 
 	// Check arguments (netlink type, callback)
-	char    *nltype = (char *)luaL_checkstring(L, 1);
+	char	*nltype = (char *)luaL_checkstring(L, 1);
 	for(i=2; i < 5; i++) {
 		fids[i-2] = 0;
 		if(lua_isnoneornil(L, i)) continue;
@@ -393,9 +576,9 @@ static int watch_netlink(lua_State *L) {
 	}
 
 	// Do the right thing
-	if(strcmp(nltype, "link") ==0 ) {
+	if(IS(nltype, "link")) {
 		netlink_watch_link(L, fids[0], fids[1], fids[2]);
-	} else if(strcmp(nltype, "addr") == 0) {
+	} else if(IS(nltype, "addr")) {
 		netlink_watch_addr(L, fids[0], fids[1], fids[2]);
 	} else {
 		for(i=0; i < 3; i++) free_function(L, fids[i]);
@@ -413,6 +596,10 @@ static int watch_netlink(lua_State *L) {
 static const struct luaL_reg lib[] = {
 	{"watch", watch_netlink},
 	{"if_rename", netlink_if_rename},
+	{"if_set", if_set},
+	{"tunnel_probe_and_rename", tunnel_probe_and_rename},
+	{"tunnel_create", tunnel_create},
+	{"probe", tun_probe},
 	{NULL, NULL}
 };
 
@@ -443,9 +630,16 @@ int luaopen_netlink(lua_State *L) {
 		return 0;
 	}
 
+	// A SOCK_DGRAM so we can do tunnel stuff..
+	dgram_fd = socket(AF_INET, SOCK_DGRAM, 0);
+	if(dgram_fd < 0) { 
+		fprintf(stderr, "unable to create dgram socket\n"); 
+		return 0; 
+	}
+
 	// Populate the service descriptor...
-    u_svc.fd = nl_cache_fd;
-    u_svc.read_func = netlink_read;
+	u_svc.fd = nl_cache_fd;
+	u_svc.read_func = netlink_read;
 	u_svc.write_func = NULL;
 	u_svc.need_write_func = NULL;
 

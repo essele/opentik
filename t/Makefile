@@ -1,9 +1,4 @@
 
-LIBS=tunnel.so fred.so
 
-DEPS_tunnel=hello
-
-$(LIBS) : %.so : %.o
-	$(CC) -o $@ $< -I $(DEPS_$*)/fred $(CFLAGS)
-
-all: $(LIBS)
+tunnel:	tunnel.c
+	cc -o tunnel tunnel.c -I/usr/include/libnl3 -lnl-3 -lnl-route-3

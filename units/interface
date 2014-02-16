@@ -11,6 +11,7 @@ package.path = OT_MODULES
 package.cpath = OT_LIBS..";/usr/lib/lua/5.1/?.so"
 
 require("unit")			-- main support library
+require("mosquitto")	-- mosquitto support
 require("netlink")		-- netlink support
 require("ListItem")		-- to support lists
 require("lfs")			-- for filesystem activities
@@ -123,12 +124,18 @@ end
 function Interface:apply()
 	local wasvalid = self.valid
 	local isvalid = self.super.apply(self)
+	local type = self.config.type
+
+	print("type="..type)
 
 	if(not wasvalid and isvalid) then
 		print("NEW INTERFACE GOING LIVE")
 		-- TODO: for configurable interfaces we need to create them
 		--       for fixed we will just wait for the match
 		--       how do we check parameters?
+		if(CB[type].if_config_new) then
+			CB[type].if_config_new(self)
+		end
 	elseif(wasvalid and isvalid) then
 		print("VALID CONFIG CHANGE")
 		-- TODO: if something changed then we should adjust the
@@ -229,7 +236,8 @@ end
 --       need to find a consistent way of doing that.
 --
 
-
+-- Ensure we have an interface list early on...
+netlink.watch("link", cb_interface_add, cb_interface_mod, cb_interface_del)
 
 
 interface = Interface:new("gre")
@@ -265,7 +273,6 @@ interface:set("name", "fred")
 function cb_addresses()
 end
 
-netlink.watch("link", cb_interface_add, cb_interface_mod, cb_interface_del)
 netlink.watch("addr", cb_addresses, cb_addresses, cb_addresses)
 
 for i,j in ipairs(nl_addrs) do

@@ -81,18 +81,11 @@ int service_loop(lua_State *L) {
 		struct unit_service_desc *s = services[i];
 		if(s->need_write_func && s->need_write_func(L, s->fd)) FD_SET(s->fd, &fds_wr);
 	}
-//	fds_wr = m_write;
-
-//	if(mosquitto_want_write(mosq)) FD_SET(mosq_fd, &fds_wr);
 
 	rc = select(max_fd+1, &fds_rd, &fds_wr, NULL, &tv);
 	fprintf(stderr, "select rc=%d\n", rc);
 
-	if(rc == 0) {
-		// Timeout... run mosquitto housekeeping
-//		rc = mosquitto_loop_misc(mosq);
-//		fprintf(stderr, "mlmisc: %d\n", rc);
-	} else {
+	if(rc > 0) {
 		// Now we can look at extra services
 		for(i=0; i < service_slots; i++) {
 			struct unit_service_desc *s = services[i];

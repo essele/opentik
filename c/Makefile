@@ -10,7 +10,7 @@ ALL_D				:= $(wildcard *.d)
 
 %.so:	%.o
 	@echo [LD] $@
-	@$(CC) -shared -o $@ $(CFLAGS) $(CFLAGS_$@) $(LDFLAGS) $(LDFLAGS_$@) $^
+	@$(CC) -shared -o $@ $^ $(CFLAGS) $(CFLAGS_$@) $(LDFLAGS) $(LDFLAGS_$@) 
 
 %.o:	%.c Makefile
 	@echo [CC] $@
@@ -19,7 +19,7 @@ ALL_D				:= $(wildcard *.d)
 #
 # All of the LIBS we wan to build
 #
-LIBS				= netlink.so mosquitto.so filewatch.so unit.so tunnel.so
+LIBS				= netlink.so mosquitto.so filewatch.so unit.so 
 
 all:				$(LIBS)
 
@@ -42,7 +42,6 @@ unit.so:			unit.o
 mosquitto.so:		mosquitto.o serialize.o
 netlink.so:			netlink.o
 filewatch.so:		filewatch.o
-tunnel.so:			tunnel.o
 
 
 include $(ALL_D)
