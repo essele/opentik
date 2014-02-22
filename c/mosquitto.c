@@ -28,6 +28,7 @@ static struct unit_service_desc	u_svc;
  */
 static void message_callback(struct mosquitto *m, void *obj, const struct mosquitto_message *msg) {
 	lua_State 	*L = (lua_State *)obj;
+	bool		matches = false;
 
 	fprintf(stderr, "callback\n");
 
@@ -38,6 +39,23 @@ static void message_callback(struct mosquitto *m, void *obj, const struct mosqui
 	fprintf(stderr, "1\n");
 	lua_pushstring(L, msg->topic);	
 	lua_rawget(L, -2);
+	// If we don't have a match, we'll need to check wildcards...
+	if(lua_isnil(L, -1)) {
+		// nil is effectively pushed now, so we can iterate from the start
+		while(lua_next(L, -2)) {
+			// the topic is now at -2, function at -1
+			mosquitto_topic_matches_sub((char *)lua_tostring(L, -2), msg->topic, &matches);
+			if(matches) break;
+			lua_pop(L, 1);
+		}
+		if(matches) {
+			// the stack is function, key, table at this point
+			// we need to get the key out of the way
+			lua_remove(L, -2);
+		} else {
+			lua_pushnil(L);
+		}
+	}
 	if(!lua_isfunction(L, -1)) {
 		fprintf(stderr, "WARN: no callback for topic [%s]\n", msg->topic);
 		lua_pop(L, 2);

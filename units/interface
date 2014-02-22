@@ -34,18 +34,6 @@ CB.loopback = {}
 -- Setup the field definitions for the various types of
 -- interfaces
 --
-DEF["interface/gre"] = {
-	["fields"] = {
-		["name"] 		= { type="name", nametype="interface", required=true, unique=true,
-							default=ListItem.namegen, ngprefix="gre" },
-		["type"]		= { type="internal" },
-		["ifindex"]		= { type="internal" },
-		["mtu"] 		= { type="number", range="0-65536", default=1492 },
-		["local"] 		= { type="ipv4", required=true },
-		["remote"] 		= { type="ipv4", required=true }
-	}
-}
-
 DEF["interface/ether"] = {
 	["fields"] = {
 		["name"] 		= { type="name", nametype="interface", required=true, unique=true,
@@ -74,12 +62,8 @@ for sm in lfs.dir(".") do
 	if(string.match(sm, "^interface.%a+$")) then
 		print("EXECUTING: "..sm)
 		dofile(sm)
-		print(">>> "..tostring(CB.gre.if_pre_add))
 	end
 end
-
-
-print(">>> "..tostring(gre_dummy_seen))
 
 --
 -- Create a new structure containing:
@@ -117,42 +101,39 @@ function Interface:set(item, value)
 end
 
 --
--- For apply() we need to track two scenarios...
--- 1. We weren't valid and now we are ... i.e. add the interface
--- 2. We just changed some stuff ... i.e. down, change, up
+-- Create is called whenever the config is considered valid and the item is
+-- enabled, so for us we'll call our type specific code...
 --
-function Interface:apply()
-	local wasvalid = self.valid
-	local isvalid = self.super.apply(self)
+function Interface:action_create()
 	local type = self.config.type
 
-	print("type="..type)
-
-	if(not wasvalid and isvalid) then
-		print("NEW INTERFACE GOING LIVE")
-		-- TODO: for configurable interfaces we need to create them
-		--       for fixed we will just wait for the match
-		--       how do we check parameters?
-		if(CB[type].if_config_new) then
-			CB[type].if_config_new(self)
-		end
-	elseif(wasvalid and isvalid) then
-		print("VALID CONFIG CHANGE")
-		-- TODO: if something changed then we should adjust the
-		--       interface
-	elseif(wasvalid and not isvalid) then
-		print("CONFIG CHANGED TO INVALID")
-		-- TODO: we had a good config, now we don't have
-		--       we may need to remove the physical interface
-		--       or take it down
-	else
-		print("STILL INVALID")
-		-- TODO: was invalid, still is ... do nothing
+	print("action_create: " .. type)
+	if(CB[type].if_create) then
+		CB[type].if_create(self)
 	end
-	
-	return isvalid
 end
 
+--
+-- Change is called on a live interface when we change some config item,
+-- we'll do this all in our type specific code...
+--
+function Interface:action_change(old_config)
+	print("action_change")
+	if(CB[type].if_change) then
+		CB[type].if_change(self, old_config)
+	end
+end
+
+--
+-- Remove is called when the interface goes invalid or is disabled, so we
+-- call our type specific code here as well
+--
+function Interface:action_remove()
+	print("action_remove")
+	if(CB[type].if_remove) then
+		CB[type].if_remove(self)
+	end
+end
 
 --
 -- Interface callback from Netlink, we will get these at startup as
@@ -236,12 +217,9 @@ end
 --       need to find a consistent way of doing that.
 --
 
--- Ensure we have an interface list early on...
-netlink.watch("link", cb_interface_add, cb_interface_mod, cb_interface_del)
-
 
 interface = Interface:new("gre")
-interface:set("mtu", 1492)
+--interface:set("mtu", 1492)
 interface:set("local", "10.2.0.1")
 interface:set("remote", "10.3.0.1")
 interface:set("name", "grelee")
@@ -267,20 +245,31 @@ for i,j in ipairs(LIST.interface) do
 	end
 end
 
-interface = Interface:new("gre")
-interface:set("name", "fred")
+--interface = Interface:new("gre")
+--interface:set("name", "fred")
 
 function cb_addresses()
 end
+function cmd_interface(topic, req)
+	print("Got command request: topic="..topic)
+end
 
-netlink.watch("addr", cb_addresses, cb_addresses, cb_addresses)
+--netlink.watch("addr", cb_addresses, cb_addresses, cb_addresses)
+netlink.watch("link", cb_interface_add, cb_interface_mod, cb_interface_del)
 
+--
+--
+--
+mosquitto.subscribe("/cmd/interface/+", cmd_interface)
+
+--[[
 for i,j in ipairs(nl_addrs) do
 	print("Index="..i)
 	for k,v in pairs(j) do
 		print("\tk="..k.." v="..v)
 	end
 end
+]]--
 
 while(1) do
 	unit.service_loop()

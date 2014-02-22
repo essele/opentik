@@ -28,7 +28,8 @@ List = {}			-- List functions
 
 --
 -- We need to be able to create the base lists and set specific
--- configuration
+-- configuration. Here we subscribe to the command channel for the
+-- given list
 --
 function List.create(name, key)
 	LIST[name] = {}
@@ -37,13 +38,21 @@ function List.create(name, key)
 end
 
 --
+-- We need to be able to register command handlers for the
+-- List, we subscribe to the relevant mosquitto channel
+-- with the function as a callback
+--
+
+
+
+--
 -- Find a ListItem in a list given a field and value to find
 --
--- NOTE: we only search valid items
+-- NOTE: we only search valid items and non-disabled
 --
 function List.findItem(listname, fieldname, value)
 	for k,v in ipairs(LIST[listname]) do
-		if(v.valid and v.config[fieldname] == value) then return v end
+		if(v.valid and v.enabled and v.config[fieldname] == value) then return v end
 	end
 	return nil
 end
@@ -67,6 +76,10 @@ function ListItem:inherit(listname, type)
 	return item
 end
 
+--
+-- The init function sets up sensible defaults, stores the field
+-- definitions.
+--
 function ListItem:init(listname, type)
 	-- Get the field definitions
 	if(not DEF[type]) then
@@ -165,6 +178,26 @@ function ListItem:set(item, value)
 end
 
 --
+-- When we get a value we should return the default if the value
+-- isn't included in the config.
+-- NOTE: this is from config, not scratch.
+--
+function ListItem:get(item)
+	if(self.config[item] ~= nil) then return self.config[item] end
+	if(self.fields[item].default ~= nil) then 
+		if(type(self.fields[item].default) == "function") then
+				self.config[fname] = f.default(self.list, f, fname)
+			return self.fields[item].default(self.list, self.fields[item], item)
+		else
+			return self.fields[item].default
+		end
+	end
+	return nil
+end
+
+
+
+--
 -- The apply function would validate any config-wide requirements and
 -- then move the scratch to valid config ... any complex work should
 -- be done by the child, we simply move the config here (i.e. it can't fail)
@@ -172,11 +205,30 @@ end
 -- We do check for all required fields here and will set the "valid" field
 -- accordingly.
 --
+-- If we are enabled then we might call item_add if we are just enabled
+-- or we have become valid.
+--
+-- If we are disabled or invalid then we will probably call item_del if we
+-- were previously enabled and valid
+--
 -- @return the items valid status
 --
 function ListItem:apply()
 	local valid = true;
+	local was_valid = self.valid
+	local was_enabled = self.enable
+	local old_config = {}
 
+	-- Check for enablement
+	if(self.scratch.enable) then
+		self.enable = self.scratch.enable
+		self.scratch.enable = nil
+	end
+
+	-- Keep a copy of our old config (for changes)
+	for k,v in pairs(self.config) do old_config[k] = v end
+
+	-- Update the config
 	self.config = self.scratch
 	self.scratch = nil
 
@@ -184,8 +236,32 @@ function ListItem:apply()
 	for k,v in pairs(self.fields) do
 		if(v.required and not self.config[k]) then valid=false end
 	end
-	
 	self.valid = valid
+
+	-- Work out which actions to call
+	if(self.valid and self.enabled) then
+		--
+		-- We have a potentially live scenario here our actions
+		-- depend on our previous state
+		--
+		-- If we weren't valid or enabled then we are effectively
+		-- new... otherwise we must be a change...
+		if(not was_valid or not was_enabled) then
+			self:action_create()
+		else
+			self:action_change(old_config)
+		end
+	else
+		--
+		-- We are not live at the moment, so we only need to
+		-- work out if this is a change from a prior live state
+		-- to see if we call action_remove()
+		--
+		if(was_valid and was_enabled) then
+			self:action_remove()
+		end
+	end
+	
 	return valid
 end
 

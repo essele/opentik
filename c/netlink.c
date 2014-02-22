@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h> 
+#include <errno.h>
 #include <lua.h>
 #include <lauxlib.h>
 #include <lualib.h>
@@ -356,8 +357,7 @@ finish:
  */
 int tunnel_create(lua_State *L) {
     int                     rc;
-    struct ip_tunnel_parm   tp;
-    struct ip_tunnel_parm   *p = &tp;
+    struct ip_tunnel_parm   tp, *p = &tp;
     struct ifreq            ifr;
 
 	char					*name = (char *)luaL_checkstring(L, 1);
@@ -390,7 +390,7 @@ int tunnel_create(lua_State *L) {
 	p->iph.daddr = inet_addr(remote);
 
 	// Do it...
-    if(!(rc = ioctl(dgram_fd, SIOCADDTUNNEL, &ifr))) {
+    if((rc = ioctl(dgram_fd, SIOCADDTUNNEL, &ifr)) != 0) {
 		fprintf(stderr, "tunnel_create: ioctl SIOCADDTUNNEL failed (rc=%d)\n", rc);
 		lua_pushnumber(L, 0);
 		return 1;
@@ -400,8 +400,33 @@ int tunnel_create(lua_State *L) {
 	return 1;
 }
 
+int tunnel_delete(lua_State *L) {
+    int                     rc;
+    struct ip_tunnel_parm   tp, *p = &tp;
+    struct ifreq            ifr;
+	char					*name = (char *)luaL_checkstring(L, 1);
+
+	// Clear out and setup our structure...
+    memset(p, 0, sizeof(struct ip_tunnel_parm));
+    ifr.ifr_ifru.ifru_data = (void *)p;
+
+	// Set the name, ready for delete
+	strcpy(ifr.ifr_name, name);
+	strcpy(p->name, name);
+
+	// Do it...
+    if((rc = ioctl(dgram_fd, SIOCDELTUNNEL, &ifr)) != 0) {
+		fprintf(stderr, "%s: ioctl SIOCDELTUNNEL failed (rc=%d, errno=%d)\n", __func__, rc, errno);
+		lua_pushnumber(L, 0);
+		return 1;
+	}
+	// We succeeded
+	lua_pushnumber(L, 1);
+	return 1;
+}
+
 /**
- * Set an interface mtu value
+ * Set an interface value (inc. up and down)
  */
 static int if_set(lua_State *L) {
 	struct rtnl_link	*delta = rtnl_link_alloc();
@@ -599,7 +624,7 @@ static const struct luaL_reg lib[] = {
 	{"if_set", if_set},
 	{"tunnel_probe_and_rename", tunnel_probe_and_rename},
 	{"tunnel_create", tunnel_create},
-	{"probe", tun_probe},
+	{"tunnel_delete", tunnel_delete},
 	{NULL, NULL}
 };
 
