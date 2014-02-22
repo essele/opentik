@@ -1,34 +1,15 @@
 #!../luajit
 
-print(package.path)
-print(package.cpath)
-
-OT_BASE_DIR="/home/essele/dev/opentik"
-OT_MODULES=OT_BASE_DIR.."/lua/?.lua"
-OT_LIBS=OT_BASE_DIR.."/c/?.so"
-
-package.path = OT_MODULES
-package.cpath = OT_LIBS..";/usr/lib/lua/5.1/?.so"
-
-require("unit")			-- main support library
-require("mosquitto")	-- mosquitto support
-require("netlink")		-- netlink support
-require("ListItem")		-- to support lists
-require("lfs")			-- for filesystem activities
-
 --
 -- Create the main interface list and set the name field
 -- as the key field
 --
 List.create("interface", "name")
 
---
--- Create the CALLBACKS table so we can register type
--- specific activities
---
-CB = {}
-CB.ether = {}
-CB.loopback = {}
+
+-- TODO: remove
+CB.interface.ether = {}
+CB.interface.loopback = {}
 
 --
 -- Setup the field definitions for the various types of
@@ -57,6 +38,8 @@ DEF["interface/pppoe"] = {
 --
 -- Load any submodules that exist
 --
+--
+--[[
 local sm
 for sm in lfs.dir(".") do
 	if(string.match(sm, "^interface.%a+$")) then
@@ -64,6 +47,7 @@ for sm in lfs.dir(".") do
 		dofile(sm)
 	end
 end
+]]--
 
 --
 -- Create a new structure containing:
@@ -108,9 +92,10 @@ function Interface:action_create()
 	local type = self.config.type
 
 	print("action_create: " .. type)
-	if(CB[type].if_create) then
-		CB[type].if_create(self)
+	if(CB.interface[type].if_create) then
+		CB.interface[type].if_create(self)
 	end
+	mosquitto.publish("/state/interface/"..self.config.name, "up")
 end
 
 --
@@ -119,8 +104,8 @@ end
 --
 function Interface:action_change(old_config)
 	print("action_change")
-	if(CB[type].if_change) then
-		CB[type].if_change(self, old_config)
+	if(CB.interface[type].if_change) then
+		CB.interface[type].if_change(self, old_config)
 	end
 end
 
@@ -130,9 +115,10 @@ end
 --
 function Interface:action_remove()
 	print("action_remove")
-	if(CB[type].if_remove) then
-		CB[type].if_remove(self)
+	if(CB.interface[type].if_remove) then
+		CB.interface[type].if_remove(self)
 	end
+	mosquitto.publish("/state/interface/"..self.config.name, "gone")
 end
 
 --
@@ -148,13 +134,13 @@ end
 function cb_interface_add(index, name, type, _)
 	local iface
 	print("Interface callback: index="..index.." name="..name.." type="..type)
-	print("Interface type: "..type.." func="..tostring(CB[type].if_pre_add))
+	print("Interface type: "..type.." func="..tostring(CB.interface[type].if_pre_add))
 
 	--
 	-- CALLBACK: if_pre_add
 	--
-	if(CB[type].if_pre_add) then
-		local action = CB[type].if_pre_add(index, name)
+	if(CB.interface[type].if_pre_add) then
+		local action = CB.interface[type].if_pre_add(index, name)
 		if(action == "ignore") then return end
 	end
 
@@ -188,6 +174,7 @@ function cb_interface_add(index, name, type, _)
 
 		-- We go active ... if we weren't then this is an event!
 		iface.active = true;
+
 	else
 		-- We don't have a match ... is this dynamic then?
 		-- For interfaces we don't support dynamic, since everything
@@ -217,7 +204,7 @@ end
 --       need to find a consistent way of doing that.
 --
 
-
+--[[
 interface = Interface:new("gre")
 --interface:set("mtu", 1492)
 interface:set("local", "10.2.0.1")
@@ -225,6 +212,8 @@ interface:set("remote", "10.3.0.1")
 interface:set("name", "grelee")
 
 rc = interface:apply()
+
+interface:add_dependency("/state/interface/eth0", "up")
 
 
 interface = Interface:new("ether")
@@ -262,6 +251,7 @@ netlink.watch("link", cb_interface_add, cb_interface_mod, cb_interface_del)
 --
 mosquitto.subscribe("/cmd/interface/+", cmd_interface)
 
+]]--
 --[[
 for i,j in ipairs(nl_addrs) do
 	print("Index="..i)
@@ -270,9 +260,4 @@ for i,j in ipairs(nl_addrs) do
 	end
 end
 ]]--
-
-while(1) do
-	unit.service_loop()
-end
-
 

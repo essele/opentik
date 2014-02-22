@@ -121,6 +121,7 @@ static int publish(lua_State *L) {
 	data = serialize(L, 2, &len);
 	if(lua_toboolean(L, 3) == 1) persist = true;
 
+	// TODO: data is not zero terminated, so remove these lines
 	fprintf(stderr, "TOPIC: %s\n", topic);
 	fprintf(stderr, "DATA: %s\n", data);
 	fprintf(stderr, "LEN: %d\n", len);

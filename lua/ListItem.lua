@@ -23,6 +23,8 @@ require("Validators")
 LIST = {}			-- all the lists
 DEF = {}			-- the field definitions
 LCFG = {}			-- list configs (keys etc)
+DEPS = {}			-- dependencies (key=topic, value=list of items)
+DEPV = {}			-- cache of dependency values
 ListItem = {}		-- ListItem class
 List = {}			-- List functions
 
@@ -35,6 +37,67 @@ function List.create(name, key)
 	LIST[name] = {}
 	LCFG[name] = {}
 	LCFG[name].key = key
+end
+
+--
+-- Helper function to remove an item from a list
+--
+function remove_from_list(list, item)
+	local pos = nil
+
+	for i,v in ipairs(list) do
+		if(v == item) then pos = i break end
+	end
+
+	if(pos) then table.remove(list, pos) return 1 end
+	return 0
+end
+
+--
+-- Dependency callback ... when any of our dependencies change
+-- we will get called. Our job is to go through the list items
+-- seeing if this dependency change will impact the status
+-- of the item
+--
+function List.cb_dependencies(topic, value)
+	local items = DEPS[topic]
+
+	print("Got topic callback for: " .. topic)
+	DEPV[topic] = value
+
+	-- Call apply on each of our lists
+	for i,item in ipairs(items) do
+		item:apply()
+	end
+end
+function List.add_dependency(topic, item)
+	local items = DEPS[topic]
+
+	if(not items) then
+		mosquitto.subscribe(topic, List.cb_dependencies)
+		DEPS[topic] = {}
+		DEPV[topic] = nil
+		print("Added subscription for topic: " .. topic)
+		items = DEPS[topic]
+	else
+		-- ensure we don't duplicate
+		remove_from_list(items, item)
+	end
+	table.insert(items, item)
+end
+
+function List.remove_dependency(topic, item)
+	local items = DEPS[topic]
+
+	if(not items) then return end
+	if(remove_from_list(items, item) == 1) then
+		if(#items == 0) then
+			mosquitto.unsubscribe(topic)
+			DEPS[topic] = nil
+			DEPV[topic] = nil
+			print("Removed subscription for topic: " .. topic)
+		end
+	end
 end
 
 --
@@ -97,6 +160,9 @@ function ListItem:init(listname, type)
 	self.valid = false				-- we start invalid (until we learn otherwise)
 	self.enabled = true				-- we start enabled
 	self.active = false				-- we start inactive
+
+	-- Prepare for our dependencies
+	self.depends = {}
 	
 	-- Populate the default entries
 	self:defaults()
@@ -238,6 +304,26 @@ function ListItem:apply()
 	end
 	self.valid = valid
 
+
+	--
+	-- If we are potentially valid at this point we need to build
+	-- and check our dependencies, otherwise we can remove our
+	-- dependencies because we're not going to happen anyway
+	--
+	if(self.valid and self.enabled) then
+		-- Object level depedency creation...
+		if(self.build_depends) then
+			self:build_depends(old_config)
+		end
+
+		-- Check dependencies (which might make it invalid again)
+		for d,v in pairs(self.depends) do
+			if(DEPV[d] ~= v) then valid=false end
+		end
+	else
+		self:clear_depends()
+	end
+
 	-- Work out which actions to call
 	if(self.valid and self.enabled) then
 		--
@@ -261,8 +347,32 @@ function ListItem:apply()
 			self:action_remove()
 		end
 	end
-	
+
+	-- Make sure we have a scratch area properly setup so that
+	-- dependency driven calls to apply() will work ok
+	self.scratch = {}
+	for k,v in pairs(self.config) do self.scratch[k] = v end
+
+	-- Return
 	return valid
+end
+
+--
+-- We support adding and removing dependencies
+--
+function ListItem:add_dependency(topic, value)
+	self.depends[topic] = value
+	List.add_dependency(topic, self)
+end
+function ListItem:remove_dependency(topic)
+	self.depends[topic] = nil;
+	List.remove_dependency(topic, self)
+end
+function ListItem:clear_depends()
+	for topic,v in pairs(self.depends) do
+		List.remove_dependency(topic, self)
+	end
+	self.depends = {}
 end
 
 --

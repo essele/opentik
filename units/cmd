@@ -30,7 +30,4 @@ mosquitto.subscribe("/clients/"..client.."/blah", blah_callback)
 mosquitto.publish("/cmd/interface/print", { client=client.."/cmd", cmd="fred", blah=1, xx=2 })
 
 
-while(1) do
-	unit.service_loop()
-end
 

@@ -46,6 +46,19 @@ function Validators.ipv4(table, field, s)
 end
 
 --
+-- Validator for IP address with / prefix
+--
+function Validators.ipv4p(table, field, s)
+    local a,b,c,d,p = string.match(s, "^(%d+)%.(%d+)%.(%d+).(%d+)/(%d+)$")
+
+    if(not a) then return false end
+    a, b, c, d, p = tonumber(a), tonumber(b), tonumber(c), tonumber(d), tonumber(p)
+
+    if(a>255 or b>255 or c>255 or d>255 or p>32) then return false end
+    return true
+end
+
+--
 -- Validator for hostnams
 --
 function Validators.hostname(table, field, s)
