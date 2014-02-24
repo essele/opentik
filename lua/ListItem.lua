@@ -25,6 +25,10 @@ DEF = {}			-- the field definitions
 LCFG = {}			-- list configs (keys etc)
 DEPS = {}			-- dependencies (key=topic, value=list of items)
 DEPV = {}			-- cache of dependency values
+
+--
+-- The ListItem and List classes
+--
 ListItem = {}		-- ListItem class
 List = {}			-- List functions
 
@@ -56,8 +60,7 @@ end
 --
 -- Dependency callback ... when any of our dependencies change
 -- we will get called. Our job is to go through the list items
--- seeing if this dependency change will impact the status
--- of the item
+-- calling set_state()
 --
 function List.cb_dependencies(topic, value)
 	local items = DEPS[topic]
@@ -65,9 +68,9 @@ function List.cb_dependencies(topic, value)
 	print("Got topic callback for: " .. topic)
 	DEPV[topic] = value
 
-	-- Call apply on each of our lists
+	-- Call set_state() on each of our lists
 	for i,item in ipairs(items) do
-		item:apply()
+		item:set_state()
 	end
 end
 function List.add_dependency(topic, item)
@@ -76,7 +79,7 @@ function List.add_dependency(topic, item)
 	if(not items) then
 		mosquitto.subscribe(topic, List.cb_dependencies)
 		DEPS[topic] = {}
-		DEPV[topic] = nil
+		DEPV[topic] = nil			-- remove prior cache if there is one
 		print("Added subscription for topic: " .. topic)
 		items = DEPS[topic]
 	else
@@ -101,14 +104,6 @@ function List.remove_dependency(topic, item)
 end
 
 --
--- We need to be able to register command handlers for the
--- List, we subscribe to the relevant mosquitto channel
--- with the function as a callback
---
-
-
-
---
 -- Find a ListItem in a list given a field and value to find
 --
 -- NOTE: we only search valid items and non-disabled
@@ -125,10 +120,7 @@ end
 -- and set the metatable for object-like behaviours, this will generally
 -- be overridden by sub-classes
 --
--- We need a list name to add the item to, and a type to get field
--- definitions
---
-function ListItem:inherit(listname, type)
+function ListItem:inherit()
 	local item = {}
 
 	-- Setup the object
@@ -261,23 +253,61 @@ function ListItem:get(item)
 	return nil
 end
 
+--
+-- The set_state function is called when we think we might need to
+-- make changes to the state of the item. Generally this is when we
+-- have changed valid/invalid or enabled/disabled or if we have
+-- a depedency change.
+--
+-- If we are valid and enabled then we need to check he dependencies.
+--   If we pass, then we will go live (either add or change)
+--   If we fail, then we remove (if we were live before)
+--
+-- If we are not valid or not enabled then we remove (if live before)
+--
+function ListItem:set_state(old_config)
+	local was_active = self.active
+	local remove = true;			-- remove unless all ok
+	local dep_pass = true
 
+	if(self.valid and self.enabled) then
+		-- Check dependencies
+		for d,v in pairs(self.depends) do
+			if(DEPV[d] ~= v) then dep_pass=false end
+		end
+		if(dep_pass) then
+			if(not was_active) then
+				-- TODO: rc
+				self:action_create()
+			elseif(old_config) then
+				-- TODO: rc
+				self:action_change(old_config)
+			end
+			self.active = true;
+			remove = false;
+		end
+	end
+
+	if(remove) then
+		-- not ready, so remove if we were active before
+		if(was_active) then
+			-- TODO: check return codes
+			self:action_remove()
+		end
+		self.active = false;
+	end
+end
 
 --
--- The apply function would validate any config-wide requirements and
--- then move the scratch to valid config ... any complex work should
--- be done by the child, we simply move the config here (i.e. it can't fail)
+-- The apply function takes any scratch config and applies it to the live
+-- config. It then works out if the result it valid or not.
 --
--- We do check for all required fields here and will set the "valid" field
--- accordingly.
+-- If we are not valid, but we were, then we remove our dependencies.
 --
--- If we are enabled then we might call item_add if we are just enabled
--- or we have become valid.
+-- If we are now valid, then we build dependencies based on the new config.
 --
--- If we are disabled or invalid then we will probably call item_del if we
--- were previously enabled and valid
---
--- @return the items valid status
+-- We then call set_state("config") to cause a state and dependency
+-- check based on the situation.
 --
 function ListItem:apply()
 	local valid = true;
@@ -304,57 +334,41 @@ function ListItem:apply()
 	end
 	self.valid = valid
 
-
 	--
 	-- If we are potentially valid at this point we need to build
-	-- and check our dependencies, otherwise we can remove our
-	-- dependencies because we're not going to happen anyway
+	-- our dependencies, otherwise we can remove our dependencies 
+	-- because we're not going to happen anyway
 	--
 	if(self.valid and self.enabled) then
 		-- Object level depedency creation...
 		if(self.build_depends) then
 			self:build_depends(old_config)
 		end
-
-		-- Check dependencies (which might make it invalid again)
-		for d,v in pairs(self.depends) do
-			if(DEPV[d] ~= v) then valid=false end
-		end
 	else
 		self:clear_depends()
 	end
 
-	-- Work out which actions to call
-	if(self.valid and self.enabled) then
-		--
-		-- We have a potentially live scenario here our actions
-		-- depend on our previous state
-		--
-		-- If we weren't valid or enabled then we are effectively
-		-- new... otherwise we must be a change...
-		if(not was_valid or not was_enabled) then
-			self:action_create()
-		else
-			self:action_change(old_config)
-		end
-	else
-		--
-		-- We are not live at the moment, so we only need to
-		-- work out if this is a change from a prior live state
-		-- to see if we call action_remove()
-		--
-		if(was_valid and was_enabled) then
-			self:action_remove()
-		end
-	end
+	--
+	-- Now call set_state() to cause the right thing to happen
+	--
+	self:set_state(old_config)
 
-	-- Make sure we have a scratch area properly setup so that
-	-- dependency driven calls to apply() will work ok
-	self.scratch = {}
-	for k,v in pairs(self.config) do self.scratch[k] = v end
-
-	-- Return
+	-- TODO: this doesn't make sense to return
 	return valid
+end
+function ListItem:enable()
+	self.enabled = true
+	if(self.valid and self:build_depends) then
+		self:build_depends()
+		self:set_state()
+	end
+end
+function ListItem:disable()
+	if(self.enabled and self.valid) then
+		self:clear_depends()
+		self:set_state()
+	end
+	self.enabled = false
 end
 
 --

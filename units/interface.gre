@@ -62,6 +62,7 @@ end
 --
 function CB.interface.gre.if_create(self)
 	-- If we haven't done the gre0 rename yet then we need to...
+	print("IFCREARE " .. tostring(gre0_renamed))
 	if(not gre0_renamed) then netlink.tunnel_probe_and_rename("gre") gre0_renamed = true end
 
 	-- Create the interface...

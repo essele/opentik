@@ -68,7 +68,7 @@ interface:set("name", "grelee")
 
 rc = interface:apply()
 
-interface:add_dependency("/state/interface/eth0", "up")
+--interface:add_dependency("/state/interface/eth0", "up")
 
 
 interface = Interface:new("ether")

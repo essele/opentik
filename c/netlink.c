@@ -310,8 +310,8 @@ int tunnel_probe_and_rename(lua_State *L) {
 	ifr.ifr_ifru.ifru_data = (void *)&tp;
 	
 	// Do the actual probe...
-	if(!ioctl(dgram_fd, SIOCGETTUNNEL, &ifr)) {
-		fprintf(stderr, "unable to SIOCGETTUNNEL\n"); 
+	if(ioctl(dgram_fd, SIOCGETTUNNEL, &ifr) != 0) {
+		fprintf(stderr, "%s: unable to SIOCGETTUNNEL (errno=%d)\n", __func__, errno); 
 		goto finish;
 	}
 
