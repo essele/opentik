@@ -358,7 +358,7 @@ function ListItem:apply()
 end
 function ListItem:enable()
 	self.enabled = true
-	if(self.valid and self:build_depends) then
+	if(self.valid and self.build_depends) then
 		self:build_depends()
 		self:set_state()
 	end
@@ -415,6 +415,4 @@ function ListItem.namegen(list, f, fname)
 	end
 	return prefix .. (i+1)
 end
-
-
 

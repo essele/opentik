@@ -68,6 +68,7 @@ end
 --
 function Address:action_create()
 	print("action_create: ")
+	netlink.addr_add(self.config.address, self.config.interface);
 end
 
 --

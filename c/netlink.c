@@ -181,7 +181,7 @@ static char *addr2str(struct nl_addr *addr, char *buf, size_t size) {
  *
  * TODO: not right yet!
  */
-static void add_addr_to_lua(lua_State *L, struct rtnl_addr *addr) {
+/*static void add_addr_to_lua(lua_State *L, struct rtnl_addr *addr) {
 	char			buf[256];
 
 	// Get the addrs table...
@@ -206,7 +206,7 @@ static void add_addr_to_lua(lua_State *L, struct rtnl_addr *addr) {
 	int index = lua_objlen(L, -2);
 	lua_rawseti(L, -2, index+1);
 	lua_pop(L, 1);
-}
+}*/
 
 /**
  * Remove a given link from the Lua "nl_links" table
@@ -266,19 +266,61 @@ static void cb_link_initial(struct nl_object *obj, void *arg) {
 }
 
 /**
- * Callback for initial interation over the address cache
+ * Callback for the interation over the address cache
  */
-static void cb_addr_initial(struct nl_object *obj, void *arg) {
+static void cb_addr_dynamic(struct nl_cache *cache, struct nl_object *obj, int action, void *arg) {
 	lua_State			*L = (lua_State *)arg;
 	struct rtnl_addr	*addr = (struct rtnl_addr *)obj;
-	
-	fprintf(stderr, "address cache initial: %p\n", obj);
-	add_addr_to_lua(L, addr);
-}
-static void cb_addr_dynamic(struct nl_cache *cache, struct nl_object *obj, int action, void *arg) {
-	//lua_State			*L = (lua_State *)arg;
+	struct rtnl_link	*link = NULL;
+	int					index;
+	int					fid;
+	char				buf[256], buf2[256];
+	char				actstr[8];
 
-	fprintf(stderr, "address cache dynamic: %p (action=%d)\n", obj, action);
+	fprintf(stderr, "static call\n");
+	index = rtnl_addr_get_ifindex(addr);
+	if(rtnl_link_get_kernel(nls, index, NULL, &link) != 0) {
+		fprintf(stderr, "%s: unable to get interface (idx=%d)\n", __func__, index);
+		goto finish;
+	}
+	
+	switch(action) {
+		case NL_ACT_NEW:
+			fid = fid_addr_add; strcpy(actstr, "add");
+			break;
+		case NL_ACT_CHANGE:
+			fid = fid_addr_mod; strcpy(actstr, "change");
+			break;
+		case NL_ACT_DEL:
+			fid = fid_addr_del; strcpy(actstr, "delete");
+			break;
+	}
+	
+	if(fid == 0) goto finish;		// no callback provided
+    get_function(L, fid);
+    if(!lua_isfunction(L, -1)) {
+        fprintf(stderr, "%s: invalid function for callback (action=%d)\n", __func__, action);
+        goto finish;
+    }
+
+	// Now push the args...
+	addr2str(rtnl_addr_get_local(addr), buf, sizeof(buf));
+	snprintf(buf2, sizeof(buf2), "%s/%d", buf, rtnl_addr_get_prefixlen(addr));
+
+	lua_pushstring(L, buf2);
+	if(link) 
+		lua_pushstring(L, rtnl_link_get_name(link));
+	else
+		lua_pushstring(L, "unknown");
+	lua_pushstring(L, actstr);
+    lua_call(L, 3, 0);
+
+finish:
+	if(link) rtnl_link_put(link);
+}
+static void cb_addr_initial(struct nl_object *obj, void *arg) {
+	fprintf(stderr, "dynamic call\n");
+	cb_addr_dynamic(NULL, obj, NL_ACT_NEW, arg);
 }
 
 /*
@@ -426,6 +468,95 @@ int tunnel_delete(lua_State *L) {
 }
 
 /**
+ * Given an ipaddress and an interface we build an rtnl_addr
+ * structure that we can use for adds, changes or deletes.
+ */
+static struct rtnl_addr *create_addr(char *ip, char *iface) {
+	struct nl_addr			*ipaddr = NULL;
+	struct rtnl_addr		*addr = NULL;
+	struct rtnl_link		*link = NULL;
+
+	// First we find the interface (link)
+	if(rtnl_link_get_kernel(nls, 0, iface, &link) != 0) {
+		fprintf(stderr, "%s: unable to find link %s", __func__, iface);
+		goto finish;
+	}
+
+	// Now we attempt to parse the IP address
+	if(nl_addr_parse(ip, AF_UNSPEC, &ipaddr) != 0) {
+		fprintf(stderr, "%s: nl_addr_parse(%s) failed\n", __func__, ip);
+		goto finish;
+	}
+
+	// Create the address
+	addr = rtnl_addr_alloc();
+	if(!addr) {
+		fprintf(stderr, "%s: rtnl_addr_alloc() failed\n", __func__);
+		goto finish;
+	}
+
+	// Set the link and address
+	rtnl_addr_set_link(addr, link);
+	rtnl_addr_set_local(addr, ipaddr);
+
+finish:
+	if(ipaddr) nl_addr_put(ipaddr);
+	if(link) rtnl_link_put(link);
+	
+	return addr;
+}
+
+/**
+ * Add an address to an interface
+ * 
+ * takes a.b.c.d or a.b.c.d/pp
+ */
+static int addr_add(lua_State *L) {
+	char					*ip = (char *)luaL_checkstring(L, 1);
+	char					*iface = (char *)luaL_checkstring(L, 2);
+	struct rtnl_addr		*addr = NULL;
+	int						rval = 0;
+
+	if(!(addr = create_addr(ip, iface))) goto finish;
+	
+	// New we add the address
+	if(rtnl_addr_add(nls, addr, 0) != 0) {
+		fprintf(stderr, "%s: unable to rtnl_addr_add\n", __func__);
+		goto finish;
+	}
+	rval = 1;
+
+finish:
+	if(addr) rtnl_addr_put(addr);
+	lua_pushnumber(L, rval); 
+	return 1;
+}
+
+/**
+ * Remove an address from an interface
+ */
+static int addr_remove(lua_State *L) {
+	char					*ip = (char *)luaL_checkstring(L, 1);
+	char					*iface = (char *)luaL_checkstring(L, 2);
+	struct rtnl_addr		*addr = NULL;
+	int						rval = 0;
+
+	if(!(addr = create_addr(ip, iface))) goto finish;
+	
+	// New we delete the address
+	if(rtnl_addr_delete(nls, addr, 0) != 0) {
+		fprintf(stderr, "%s: unable to rtnl_addr_delete\n", __func__);
+		goto finish;
+	}
+	rval = 1;
+
+finish:
+	if(addr) rtnl_addr_put(addr);
+	lua_pushnumber(L, rval); 
+	return 1;
+}
+
+/**
  * Set an interface value (inc. up and down)
  */
 static int if_set(lua_State *L) {
@@ -548,10 +679,6 @@ static int netlink_watch_link(lua_State *L, int fid_add, int fid_mod, int fid_de
 static int netlink_watch_addr(lua_State *L, int fid_add, int fid_mod, int fid_del) {
 	int rc;
 
-	// Create a new global table for the links
-	lua_newtable(L);
-	lua_setglobal(L, "nl_addrs");
-
 	// Create a cache manager for links
 	rc = nl_cache_mngr_add(mngr, "route/addr", (change_func_t)cb_addr_dynamic, 
 														(void *)L, &cache_addr);
@@ -622,6 +749,8 @@ static const struct luaL_reg lib[] = {
 	{"watch", watch_netlink},
 	{"if_rename", netlink_if_rename},
 	{"if_set", if_set},
+	{"addr_add", addr_add},
+	{"addr_remove", addr_remove},
 	{"tunnel_probe_and_rename", tunnel_probe_and_rename},
 	{"tunnel_create", tunnel_create},
 	{"tunnel_delete", tunnel_delete},
