@@ -14,7 +14,6 @@
 #include <netlink/route/link.h>
 #include <netlink/route/addr.h>
 
-
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -86,56 +85,67 @@ static void create_flags_hash(lua_State *L, unsigned int flags) {
 }
 
 /**
- * Call the callback function for items with change details
- * @arg L			Lua state
- * @arg fid			function id to call
- * @arg action		is it "add", "change" or "delete"
- * @arg link		the link object
- */
-static void callback_lua_link(lua_State *L, int fid, struct rtnl_link *link, char *action) {
-	int					index = rtnl_link_get_ifindex(link);
-	char				buf[256];
-
-	if(fid == 0) return;		// no callback provided
-
-    get_function(L, fid);
-    if(!lua_isfunction(L, -1)) {
-        fprintf(stderr, "callback_lua_nl: invalid function for callback\n");
-        return;
-    }
-	lua_pushnumber(L, index);
-	lua_pushstring(L, rtnl_link_get_name(link));
-	lua_pushstring(L, nl_llproto2str(rtnl_link_get_arptype(link), buf, sizeof(buf)));
-	lua_pushstring(L, action);
-    lua_call(L, 4, 0);
-}
-
-/**
  * Helper macros for setting table values for the link
  */
 #define	SET_NUM(f,code) lua_pushstring(L,f); lua_pushnumber(L, code); lua_settable(L, -3)
 #define	SET_STR(f,code) lua_pushstring(L,f); lua_pushstring(L, code); lua_settable(L, -3)
 
 /**
- * Add/modify link details within the "nl_links" table
- * @arg L			Lua state
- * @arg link		Netlink rtnl_link object
+ * Simple address print routine to convert addresses into text
  */
-static void add_link_to_lua(lua_State *L, struct rtnl_link *link) {
-	unsigned int	flags;
-	int				index;
-	char			buf[256];
+static char *addr2str(struct nl_addr *addr, int prefix, char *buf, size_t size) {
+	void	*bin;
+	int		family, l;
 
-	index = rtnl_link_get_ifindex(link);
+	if(!addr) { snprintf(buf, size, "none"); return buf; }
+	bin = nl_addr_get_binary_addr(addr);
+	family = nl_addr_get_family(addr);
 
-	// Get the links table...
-	lua_getglobal(L, "nl_links");
+	switch(family) {
+		case AF_INET:	inet_ntop(AF_INET, bin, buf, size); break;
+		case AF_INET6:	inet_ntop(AF_INET6, bin, buf, size); break;
+		default:		snprintf(buf, size, "UNKNOWN"); break;
+	}
+	if(prefix) {
+		l = strlen(buf);
+		snprintf(buf+l, sizeof(buf)-l, "/%d", prefix);
+	}
+	return buf;
+}
 
-	// See if we have the index already... if not, new table
-	lua_rawgeti(L, -1, index);
-	if(lua_isnil(L, -1)) { lua_pop(L, 1); lua_newtable(L); }
-	
-	SET_NUM("index", index);
+/*
+ * This callback is used for any dynamic changes for the link
+ * cache (i.e. after the system has started up and got through the
+ * initial list)
+ */
+static void cb_link_dynamic(struct nl_cache *cache, struct nl_object *obj, int action, void *arg) {
+	lua_State			*L = (lua_State *)arg;
+	struct rtnl_link	*link = (struct rtnl_link *)obj;
+	unsigned int		flags;
+	int					fid = 0;
+	char				buf[256];
+	char				*actstr;
+
+	switch(action) {
+		case NL_ACT_NEW: 		fid = fid_link_add; actstr="add"; break;
+		case NL_ACT_CHANGE: 	fid = fid_link_mod; actstr="change"; break;
+		case NL_ACT_DEL: 		fid = fid_link_del; actstr="delete"; break;
+	}
+
+	if(fid == 0) return;		// no callback provided
+    get_function(L, fid);
+    if(!lua_isfunction(L, -1)) {
+        fprintf(stderr, "%s: invalid function for callback (action=%d)\n", __func__, action);
+		return;
+    }
+
+	// Now we push interface name, proto
+	lua_pushstring(L, rtnl_link_get_name(link));
+	lua_pushstring(L, nl_llproto2str(rtnl_link_get_arptype(link), buf, sizeof(buf)));
+
+	// Now the interface object
+	lua_newtable(L);
+	SET_NUM("index", rtnl_link_get_ifindex(link));
 	SET_STR("name", rtnl_link_get_name(link));
 	SET_STR("type", nl_llproto2str(rtnl_link_get_arptype(link), buf, sizeof(buf)));
 	SET_STR("operstate", rtnl_link_operstate2str(rtnl_link_get_operstate(link), buf, sizeof(buf)));
@@ -150,119 +160,18 @@ static void add_link_to_lua(lua_State *L, struct rtnl_link *link) {
 	create_flags_hash(L, flags);
 	lua_settable(L, -3);
 
-	// Now set the table at the index...
-	lua_rawseti(L, -2, index);
-	lua_pop(L, 1);
+	// And the "action"
+	lua_pushstring(L, actstr);
+
+	// And call the callback...
+    lua_call(L, 4, 0);
 }
 
 /**
- * Simple address print routine to convert addresses into text
- */
-static char *addr2str(struct nl_addr *addr, char *buf, size_t size) {
-	void	*bin;
-	int		family;
-
-	if(!addr) { snprintf(buf, size, "none"); return buf; }
-	bin = nl_addr_get_binary_addr(addr);
-	family = nl_addr_get_family(addr);
-
-	switch(family) {
-		case AF_INET:	inet_ntop(AF_INET, bin, buf, size); break;
-		case AF_INET6:	inet_ntop(AF_INET6, bin, buf, size); break;
-		default:		snprintf(buf, size, "UNKNOWN"); break;
-	}
-	return buf;
-}
-
-/**
- * Add/modify addr details within the "nl_addrs" table
- * @arg L			Lua state
- * @arg addr		Netlink rtnl_addr object
- *
- * TODO: not right yet!
- */
-/*static void add_addr_to_lua(lua_State *L, struct rtnl_addr *addr) {
-	char			buf[256];
-
-	// Get the addrs table...
-	lua_getglobal(L, "nl_addrs");
-
-	lua_newtable(L);
-
-	// See if we have the index already...
-//	lua_rawgeti(L, -1, index);
-//	if(lua_isnil(L, -1)) { lua_pop(L, 1); lua_newtable(L); }
-	
-	SET_NUM("ifindex", rtnl_addr_get_ifindex(addr));
-	SET_NUM("family", rtnl_addr_get_family(addr));
-	SET_NUM("flags", rtnl_addr_get_flags(addr));
-	SET_NUM("prefixlen", rtnl_addr_get_prefixlen(addr));
-	SET_STR("scope", rtnl_scope2str(rtnl_addr_get_scope(addr), buf, sizeof(buf)));
-	SET_STR("local", addr2str(rtnl_addr_get_local(addr), buf, sizeof(buf)));
-	SET_STR("peer", addr2str(rtnl_addr_get_peer(addr), buf, sizeof(buf)));
-	SET_NUM("createtime", rtnl_addr_get_create_time(addr));
-
-	// Now set the table at the index...
-	int index = lua_objlen(L, -2);
-	lua_rawseti(L, -2, index+1);
-	lua_pop(L, 1);
-}*/
-
-/**
- * Remove a given link from the Lua "nl_links" table
- * @arg L		Lua state
- * @arg link	netlink link object
- */
-static void remove_link_from_lua(lua_State *L, struct rtnl_link *link) {
-	int				index;
-
-	index = rtnl_link_get_ifindex(link);
-
-	// Get the links table...
-	lua_getglobal(L, "nl_links");
-
-	// Zero the item...
-	lua_pushnil(L);
-	lua_rawseti(L, -2, index);
-	lua_pop(L, 1);
-	fprintf(stderr, "removed item index %d\n", index);
-}
-
-/*
- * This callback is used for any dynamic changes for the link
- * cache (i.e. after the system has started up and got through the
- * initial list)
- */
-static void cb_link_dynamic(struct nl_cache *cache, struct nl_object *obj, int action, void *arg) {
-	lua_State			*L = (lua_State *)arg;
-	struct rtnl_link	*link = (struct rtnl_link *)obj;
-
-	switch(action) {
-		case NL_ACT_NEW:
-			add_link_to_lua(L, link);
-			callback_lua_link(L, fid_link_add, link, "add");
-			break;
-		case NL_ACT_CHANGE:
-			add_link_to_lua(L, link);
-			callback_lua_link(L, fid_link_mod, link, "change");
-			break;
-		case NL_ACT_DEL:
-			remove_link_from_lua(L, link);
-			callback_lua_link(L, fid_link_del, link, "delete");
-			break;
-	}
-}
-
-/**
- * This is the callback used when iterating over the initial list
- * of interfaces
+ * For the initial loop round they will all be "new"
  */
 static void cb_link_initial(struct nl_object *obj, void *arg) {
-	lua_State			*L = (lua_State *)arg;
-	struct rtnl_link	*link = (struct rtnl_link *)obj;
-
-	add_link_to_lua(L, link);
-	callback_lua_link(L, fid_link_add, link, "add");
+	cb_link_dynamic(NULL, obj, NL_ACT_NEW, arg );
 }
 
 /**
@@ -273,11 +182,11 @@ static void cb_addr_dynamic(struct nl_cache *cache, struct nl_object *obj, int a
 	struct rtnl_addr	*addr = (struct rtnl_addr *)obj;
 	struct rtnl_link	*link = NULL;
 	int					index;
-	int					fid;
-	char				buf[256], buf2[256];
-	char				actstr[8];
+	int					fid = 0;
+	char				buf[256];
+	char				*actstr;
 
-	fprintf(stderr, "static call\n");
+	// We need to interface index so we can get the name...
 	index = rtnl_addr_get_ifindex(addr);
 	if(rtnl_link_get_kernel(nls, index, NULL, &link) != 0) {
 		fprintf(stderr, "%s: unable to get interface (idx=%d)\n", __func__, index);
@@ -285,15 +194,9 @@ static void cb_addr_dynamic(struct nl_cache *cache, struct nl_object *obj, int a
 	}
 	
 	switch(action) {
-		case NL_ACT_NEW:
-			fid = fid_addr_add; strcpy(actstr, "add");
-			break;
-		case NL_ACT_CHANGE:
-			fid = fid_addr_mod; strcpy(actstr, "change");
-			break;
-		case NL_ACT_DEL:
-			fid = fid_addr_del; strcpy(actstr, "delete");
-			break;
+		case NL_ACT_NEW: 		fid = fid_addr_add; actstr="add"; break;
+		case NL_ACT_CHANGE: 	fid = fid_addr_mod; actstr="change"; break;
+		case NL_ACT_DEL: 		fid = fid_addr_del; actstr="delete"; break;
 	}
 	
 	if(fid == 0) goto finish;		// no callback provided
@@ -303,23 +206,34 @@ static void cb_addr_dynamic(struct nl_cache *cache, struct nl_object *obj, int a
         goto finish;
     }
 
-	// Now push the args...
-	addr2str(rtnl_addr_get_local(addr), buf, sizeof(buf));
-	snprintf(buf2, sizeof(buf2), "%s/%d", buf, rtnl_addr_get_prefixlen(addr));
+	// Now push the args... ip/prefix and interfacename
+	lua_pushstring(L, addr2str(rtnl_addr_get_local(addr), rtnl_addr_get_prefixlen(addr), buf, sizeof(buf)));
+	lua_pushstring(L, link ? rtnl_link_get_name(link) : "unknown");
 
-	lua_pushstring(L, buf2);
-	if(link) 
-		lua_pushstring(L, rtnl_link_get_name(link));
-	else
-		lua_pushstring(L, "unknown");
+	// Now we create the table for the details
+	lua_newtable(L);
+	SET_NUM("ifindex", rtnl_addr_get_ifindex(addr));
+	SET_NUM("family", rtnl_addr_get_family(addr));
+	SET_NUM("flags", rtnl_addr_get_flags(addr));
+	SET_NUM("prefixlen", rtnl_addr_get_prefixlen(addr));
+	SET_STR("scope", rtnl_scope2str(rtnl_addr_get_scope(addr), buf, sizeof(buf)));
+	SET_STR("local", addr2str(rtnl_addr_get_local(addr), 0, buf, sizeof(buf)));
+	SET_STR("peer", addr2str(rtnl_addr_get_peer(addr), 0, buf, sizeof(buf)));
+	SET_NUM("createtime", rtnl_addr_get_create_time(addr));
+
+	// And the "action"
 	lua_pushstring(L, actstr);
-    lua_call(L, 3, 0);
+
+	// And call the callback...
+    lua_call(L, 4, 0);
 
 finish:
 	if(link) rtnl_link_put(link);
 }
+/*
+ * For the initial loop round they will all be "new"
+ */
 static void cb_addr_initial(struct nl_object *obj, void *arg) {
-	fprintf(stderr, "dynamic call\n");
 	cb_addr_dynamic(NULL, obj, NL_ACT_NEW, arg);
 }
 
@@ -359,23 +273,22 @@ int tunnel_probe_and_rename(lua_State *L) {
 
 	// Now see if we have gre0 as a non-pointopoint...
 	if(rtnl_link_get_kernel(nls, 0, base_device, &old) != 0) {
-		fprintf(stderr, "gre0 does not exist, this really doesn't make sense\n");
+		fprintf(stderr, "%s: gre0 does not exist, this really doesn't make sense\n", __func__);
 		goto finish;
 	}
 	if(rtnl_link_get_flags(old) & IFF_POINTOPOINT) {
-		fprintf(stderr, "gre0 is a pointopoint interface, aaarrrggghh!\n");
+		fprintf(stderr, "%s: gre0 is a pointopoint interface, aaarrrggghh!\n", __func__);
 		goto finish;
 	}
 
 	// Allocate a new link to change the name...
 	if(!(new = rtnl_link_alloc())) {
-		fprintf(stderr, "unable to create new link object");
+		fprintf(stderr, "%s: unable to create new link object\n", __func__);
 		goto finish;
 	}
 
 	// Set the naem, and action the change...
 	rtnl_link_set_name(new, new_device);
-	fprintf(stderr, "about to try change");
 	
 	if(!(rc = rtnl_link_change(nls, old, new, 0))) {
 		fprintf(stderr, "change returned %d\n", rc);
@@ -615,26 +528,26 @@ static int netlink_if_rename(lua_State *L) {
 
 	old = rtnl_link_get_by_name(cache_link, oldname);
 	if(!old) {
-		fprintf(stderr, "rename failed to find old interface");
+		fprintf(stderr, "%s: failed to find old interface", __func__);
 		lua_pushnumber(L, 1);
 		return 1;
 	}
 	new = rtnl_link_alloc();
 	if(!new) {
 		rtnl_link_put(old);
-		fprintf(stderr, "unable to create new link object");
+		fprintf(stderr, "%s: unable to create new link object", __func__);
 		lua_pushnumber(L, 1);
 		return 1;
 	}
 	rtnl_link_set_name(new, newname);
-	fprintf(stderr, "about to try change");
 	
 	int rc = rtnl_link_change(nls, old, new, 0);
-	fprintf(stderr, "change returned %d\n", rc);
+	if(rc != 0) fprintf(stderr, "%s: rtnl_link_change returned %d\n", __func__, rc);
 
 	rtnl_link_put(old);
 	rtnl_link_put(new);
 
+	// TODO: rc
 	lua_pushnumber(L, 0);
 	return 1;
 }
@@ -648,10 +561,6 @@ static int netlink_if_rename(lua_State *L) {
  */
 static int netlink_watch_link(lua_State *L, int fid_add, int fid_mod, int fid_del) {
 	int rc;
-
-	// Create a new global table for the links
-	lua_newtable(L);
-	lua_setglobal(L, "nl_links");
 
 	// Create a cache manager for links
 	rc = nl_cache_mngr_add(mngr, "route/link", (change_func_t)cb_link_dynamic, 
