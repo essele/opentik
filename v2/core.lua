@@ -10,7 +10,8 @@ require("lfs")
 -- This is the main structural table, it defines how the various sections
 -- operate and what dependencies exist
 --
-master = {
+CONFIG = {}
+CONFIG.master = {
 	["dns"] = {
 		_depends = { "interface", "interface/ethernet/0" },
 		_function = "handle_dnsmasq",
@@ -51,13 +52,43 @@ for i, m in ipairs(modules) do
 	dofile("modules/" .. m)
 end
 
-	
 
-local delta
+--
+-- We have an "active" configuration, which is the live one, in use,
+-- where previous commits have been made.
+--
+-- We have a "delta" which contains information that we have changed
+-- (added, changed, deleted) which we need to process upon a commit
+--
+-- We can then build a "tobe" config which is the result of the
+-- "active" when the "delta" have been applied
+--
+-- All of these configs are stored in the global CONFIG variable
+--
 
-delta = {
+CONFIG.active = {
 		["dns"] = {
 			resolvers = { "8.8.8.8", "8.8.4.4" }
+		},
+		["interface"] = {
+			["ethernet"] = {
+				["0"] = {
+					name = "eth0",
+					address = "192.168.95.123/24"
+				},
+				["2"] = {
+					name = "fred",
+					address = "192.168.99.111/16"
+				}
+			}
+		}
+}
+
+CONFIG.delta = {
+		["dns"] = {
+			resolvers = { "1.1.1.1", "2.2.2.2" },
+			_changed = 1,
+			_fields_changed = { ["resolvers"] = 1 }
 		},
 		["interface"] = {
 			["pppoe"] = {
@@ -65,22 +96,77 @@ delta = {
 					name = "pppoe0",
 					master = "eth0",
 					_depends = { "interface/ethernet/0" },
-				}
+					_added = 1
+				},
 			},
 			["ethernet"] = {
 				["0"] = {
-					name = "eth0",
-					address = "192.168.95.123/24",
 					mtu = 1500,
 					duplex = "auto",
-					speed = "auto"
+					speed = "auto",
+					_changed = 1,
+					_fields_added = { ["mtu"] = 1, ["duplex"] = 1, ["speed"] = 1 },
+					_fields_deleted = { ["grog"] = 1 }
 				},
 				["1"] = {
 					name = "eth1",
-					address = "192.168.1.1/24"
-				}
+					address = "192.168.1.1/24",
+					_added = 1
+				},
+
+				--
+				-- If we delete a node, then _deleted will be set, we can also add
+				-- a node back, then _added will be set.
+				--
+				-- If we have added or removed fields, then _changed will be set
+				-- along with _fields_added, _fields_changed, _fields_removed
+				--
+				["2"] = {
+					_deleted = 1
+				},
 			},
+		},
+		["firewall"] = {
+			["filter"] = {
+				["chain"] = {
+					["fred"] = {
+						_added = 1,
+						policy = "ACCEPT",
+						["rule"] = {
+							["10"] = {
+								comment = "blah",
+								_changed = 1,
+								_fields_added = { ["comment"] = 1 }
+							},
+							["20"] = {
+								_added = 1,
+								comment = "",
+								target = "ACCEPT",
+								match = "-m tcp -p tcp"
+							}
+						}
+					}
+				}
+			}
 		}
+	
+		--
+		-- At the main node level we have a _status field which shows
+		-- the disposition of the main node, either "added", "changed", or "deleted".
+		--
+		-- For "added" and "deleted" there are no sub definitions since all subfields
+		-- are either new, or going.
+		--
+		-- For "changed" we will create three new hashes showing which fields have
+		-- been added, deleted or changed.
+		--
+		-- TODO: how do we cope with deleted, then added?
+		-- 		 could do it with a function that builds an action list in order
+		-- 		 of nodes deleted, then changed, then added
+		--
+		-- Maybe better, we stick to three lists at each level and don't do the node
+		-- specific stuff.
+		--
 }
 
 --
@@ -102,6 +188,19 @@ function get_tables(path, delta, master)
 end
 
 --
+-- For a given path, return the parent (which will allow us to delete
+-- any sub nodes etc)...
+--
+function get_node(path, table)
+	local t = table
+
+	for key in string.gmatch(path, "([^/]+)") do
+		if(t and t[key]) then t = t[key] else t = nil end
+	end
+	return t
+end
+
+--
 -- Give a node path, see if it exists in the (delta) table, we use the get_tables
 -- function to do this simply.
 --
@@ -109,6 +208,68 @@ function node_exists(path, table)
 	local d = get_tables(path, table, nil)
 
 	return d ~= nil
+end
+
+--
+-- In a delta we sometimes need to know if there is any valid content
+-- (other than directives)
+--
+function has_content(delta)
+	for k,v in pairs(delta) do
+		if(string.sub(k, 1, 1) ~= "_") then return true end
+	end
+	return false
+end
+
+
+--
+-- Recursive processing of config changes, delta[key] must be a table
+--
+function apply_delta(table, delta, key)
+	if(delta[key]._deleted) then
+		print("Deleted key: " .. key)
+		table[key] = nil
+	end
+
+	-- if delta[key] is a table and doesn't have any content we will return
+	if(not has_content(delta[key])) then
+		return
+	end
+
+	-- we know we have content now, so create the object if needed
+	if(not table[key]) then
+		table[key] = {}
+		print("Prepared table: " .. key)
+	end
+
+	-- first we process any deleted fields
+	if(delta[key]._fields_deleted) then
+		for k, v in pairs(delta[key]._fields_deleted) do
+			print("Deleting field: " ..k)
+			table[key][k] = nil
+		end
+	end
+
+	-- now handle the adds and changes (and recursion for tables)
+	for k, v in pairs(delta[key]) do
+		-- ignore all the directives...
+		if(string.sub(k,1,1) == "_") then goto loop end
+
+		if(type(v) == "table") then
+			print("Recursing for: " ..k)
+			apply_delta(table[key], delta[key], k)
+		else
+			print("Setting field: " ..k)
+			table[key][k] = v
+		end
+::loop::
+	end
+
+	-- before we return we should check if we are empty, if so we can
+	-- delete ourselves, just to keep the table tidy
+	if(not has_content(table[key])) then
+		table[key] = nil;
+	end
 end
 
 --
@@ -144,20 +305,20 @@ end
 -- For full dependencies we have to look at partners as well and keep recursing
 -- until we have looked at everything
 --
-function get_full_dependencies(path, delta, master, hashref)
+function get_full_dependencies(path, hashref)
 	local d, m = get_tables(path, delta, master)
 	local rc = {}
 
 	-- keep track of things we have dealt with...
 	if(not hashref) then hashref = {} end
 
-	rc = get_node_dependencies(path, delta, master)
+	rc = get_node_dependencies(path, CONFIG.delta, CONFIG.master)
 	hashref[path] = 1;
 
 	if(m and m._partners) then
 		for i, p in ipairs(m._partners) do
 			if(not hashref[p]) then
-				append_array(rc, get_full_dependencies(p, delta, master, hashref))
+				append_array(rc, get_full_dependencies(p, hashref))
 			end
 		end
 	end
@@ -169,16 +330,28 @@ end
 -- and skip any node where the dependencies are not complete.
 --
 
-function node_walk(path, dnode, mnode, full_deltas, full_master)
+function node_walk(path, dnode, mnode)
 	local work_done = false
 
 	--
 	-- we want to process the keys in order, so we pull out the keys
-	-- and then sort them
+	-- and then sort them, for items that we are deleting we want
+	-- them to be handled early (subject to dependencies) and if
+	-- we are deleting and then adding we will need to call twice
+	-- and we should only delete the first time round
 	--
 	local keys = {}
 	for k, v in pairs(dnode) do
-		table.insert(keys, k)
+		if(string.sub(k, 1, 1) ~= "_") then
+			if(dnode[k]._deleted) then
+				table.insert(keys, "D "..k)
+				if(dnode[k]._added) then
+					table.insert(keys, "P "..k)
+				end
+			else
+				table.insert(keys, "P "..k)
+			end
+		end
 	end
 	table.sort(keys)
 
@@ -186,6 +359,11 @@ function node_walk(path, dnode, mnode, full_deltas, full_master)
 	-- Now we can process the keys..
 	--
 	for i, k in ipairs(keys) do
+		print("KKKKKKKKKKKKKKK = "..k)
+		-- remove the + or -
+		k = string.sub(k, 3)
+
+		-- work out our path, and go...
 		local v = dnode[k]
 		local nodekey = k
 		local npath = path .. "/" .. k
@@ -213,12 +391,12 @@ function node_walk(path, dnode, mnode, full_deltas, full_master)
 		-- so we will only show as ready to process once any partners are also
 		-- ready to go
 		--
-		local depends = get_full_dependencies(npath, full_deltas, full_master)
+		local depends = get_full_dependencies(npath)
 
 		if(depends) then
 			for i, d in ipairs(depends) do
 				print("Dependency: "..d)
-				if(node_exists(d, full_deltas)) then
+				if(node_exists(d, CONFIG.delta)) then
 					print("NODE NOT PROCESSED: "..d)
 					goto continue
 				end
@@ -226,58 +404,63 @@ function node_walk(path, dnode, mnode, full_deltas, full_master)
 		end
 
 		--
-		-- if the value is a table and it's not defined as a basic list,
-		-- then we need to recurse to traverse fully into the structure
+		-- if we have a function at this level, then we will call the
+		-- function with the node and the master information so that 
+		-- it can process any children.
+		--
+		-- If there is no function then we recurse
 		--
 		local nodetype = mnode[nodekey]._type
 		local func = mnode[nodekey]._function
 		local is_list = nodetype and string.sub(nodetype, 1, 5) == "list/"
 		local is_leaf = type(v) ~= "table" or is_list
 
-		--
-		-- We call our function if we have one, so it will be processed
-		-- before the children (you should replace the function if you
-		-- really need to shoehorn something in)
-		--
-		if(func) then
-			print("Calling: " .. npath .. "[" .. func .. "]")
-			work_done = true;
+		-- we should never get to a leaf unless we've missed out
+		-- a function definition in the master
+		if(is_leaf) then error("LEAF!") end
 
-			--
-			-- Any function is responsible to dealing with any fields that don't
-			-- have a custom function assigned, so once we have called our function
-			-- we can delete the fields (children) that we have processed.
-			--
+		if(func and is_leaf) then
+			error("leaf item with function definition")
+		end
+
+		if(func) then
+			local rc, err
+
+			print("Calling: " .. npath .. " [" .. tostring(func) .. "]")
+
+			rc, err = pcall(func, npath, k, v, mnode[nodekey])
+			if(not rc) then
+				print("Call failed.")
+				print("ERR: " .. err)
+			end
+
+			-- at this point we should have successfully commited this node
+			-- so we need to update the active configuration, if we had a
+			-- _deleted, then this operation will be a delete (only), we will
+			-- be called again if we need to add
+			
+			local parent = get_node(path, CONFIG.active)
+			print("Parent="..tostring(parent))
+
+			if(v._deleted) then
+				parent[k] = nil
+				v._deleted = nil
+			else
+				apply_delta(parent, dnode, k)
+				dnode[k] = nil;
+			end
+			work_done = true;
+		else
+			-- we should recurse, but only if we aren't a leaf...
 			if(not is_leaf) then
-				-- TODO: process the values (i.e. store them in the global config)
-				for kk,vv in pairs(v) do
-					if(not mnode[nodekey][kk] or not mnode[nodekey][kk]._function) then
-						v[kk] = nil
-					end
+				if(node_walk(npath, v, mnode[nodekey])) then
+					work_done = true
 				end
 			end
 		end
-
-		--
-		-- if we have children then we need to recurse to process them, we need to
-		-- keep track of work_done in here
-		--
-		if(not is_leaf) then
-			if(node_walk(npath, v, mnode[nodekey], full_deltas, full_master)) then
-				work_done = true
-			end
-		end
-
-		-- TODO: process the values (i.e. store them in the global config)
-		if(type(v) ~= "table" or is_list) then
-			print("Basic key value pair path="..path.. " k="..k.." v="..tostring(v))
-		end
-
-		--
-		-- At this point we should have fully processed this node, so we can
-		-- remove it
-		--
-		dnode[k] = nil
+		-- tidy up if we are empty...
+		print("PATH="..npath.."  leaf="..tostring(is_leaf))
+		if(dnode[k] and not has_content(dnode[k])) then dnode[k] = nil; end
 ::continue::
 	end
 	
@@ -306,7 +489,17 @@ function process_delta(delta, master)
 end
 
 
-process_delta(delta, master)
+--
+-- Serialise the config
+--
+function serialise(delta, active, master)
+	
+end
+
+
+process_delta(CONFIG.delta, CONFIG.master)
+
+--apply_delta(CONFIG.active, CONFIG.delta, "interface")
 
 --node_walk("", t, delta, delta, t)
 --node_exists("fred/bill/joe", {})
