@@ -687,8 +687,6 @@ function show_config(active, delta, master, indent, mode, parent)
 	mode = mode or " "
 	indent = indent or 0
 
-	print("PARENT="..tostring(parent).." INDENT="..indent)
-
 	--
 	-- build a combined list of keys from active and delta
 	-- so we catch the adds. We also takes the keys from
@@ -743,14 +741,108 @@ function show_config(active, delta, master, indent, mode, parent)
 	return op
 end
 
+--
+-- Read in a file in "config" format and convert it back into a
+-- table
+--
+function read_config(filename, master, file)
+	local rc = {}
+	local line
+	--
+	-- we are going to recurse, so if the file isn't open then
+	-- we need to open it here
+	--
+	if(not file) then
+		file = io.open(filename)
+		-- TODO: handle errors
+	end
+	while(true) do
+		line = file:read();
+		if(not line) then break end
+
+		--
+		-- we expect either a field value or a line with a "{" on it
+		-- which means we are opening a new section, we can have one
+		-- or two names depending if we have wildcard children
+		-- if we get a close bracket, then we return (closing the file
+		-- if we are the top level)
+		--
+
+		-- skip empty lines
+		if(string.match(line, "^%s*$")) then goto continue end
+
+		--
+		-- if we get a close bracket then we need to return, so exit
+		-- the loop
+		--
+		if(string.match(line, "}$")) then break end
+
+		--
+		-- look for a section start
+		--
+		local sec, sub = string.match(line, "^%s*([^%s]+)%s+([^%s]+)%s+{$")
+		if(not sec) then
+			sec = string.match(line, "^%s*([^%s]+)%s+{$")
+		end
+		if(sec) then
+			local mc = master and master[sec]
+			local ac
+			--
+			-- we have a section start, but we only fill in the return
+			-- if we had an equivalent master to follow
+			--
+			if(sub) then
+				mc = mc and (mc[sub] or mc["*"])
+				ac = read_config(nil, mc, file)
+				if(mc) then
+					if(not rc[sec]) then rc[sec] = {} end
+					rc[sec][sub] = ac
+				end
+			else
+				ac = read_config(nil, mc, file)
+				if(mc) then rc[sec] = ac end
+			end
+		else
+			--
+			-- this should be a field
+			--
+			local key, value = string.match(line, "^%s*([^%s]+)%s+(.*)$")
+			if(not key) then
+				print("FIELD ERROR: " .. line)
+			else
+				if(key == "#") then key = "comment" end
+				local mc = master and master[key]
+				local is_list = mc and mc._type and string.sub(mc._type, 1, 5) == "list/"
+
+				if(is_list or key == "comment") then
+					if(not rc[key]) then rc[key] = {} end
+					table.insert(rc[key], value)
+				elseif(mc) then
+					rc[key] = value
+				end
+			end	
+			
+		end
+::continue::
+	end
+
+	--
+	-- close the file, if we are the top level
+	--
+	if(filename) then file:close() end
+	return rc
+end
+
 
 --TODO -- fix the apply_delta to be based on master (might be easier)
 --
 
-op = show_config(CONFIG.active, CONFIG.delta, CONFIG.master)
-print("OK")
-print(op)
-print("DONE")
+cc = read_config("sample", CONFIG.master)
+print(show_config(cc, nil, CONFIG.master))
+
+--op = show_config(CONFIG.active, CONFIG.delta, CONFIG.master)
+--op = show_config(CONFIG.active, nil, CONFIG.master)
+--print(op)
 
 
 --show_config(CONFIG.active, nil, CONFIG.master)
