@@ -556,7 +556,20 @@ function show_field(ac, dc, mc, k, indent, mode)
 		value = ac and ac[k]
 	end
 	if(value) then
-		print(operation .. "  " .. k .. " " .. tostring(value))
+		print(operation .. string.rep(" ", indent+4) .. k .. " " .. tostring(value))
+	end
+end
+
+function show_node(ac, dc, mc, label, indent, mode, k)
+	local parent = nil
+	local has_wildcards = mc["*"]
+
+	if(has_wildcards) then
+		show_config(ac, dc, mc, indent+4, mode, k)
+	else
+		print(mode .. string.rep(" ", indent) .. label .. " {") 
+		show_config(ac, dc, mc, indent, mode, nil)
+		print(mode .. string.rep(" ", indent) .. "}")
 	end
 end
 
@@ -604,19 +617,11 @@ function show_config(active, delta, master, indent, mode, parent)
 		-- if we have wildcard children then we need to pass
 		-- our name as parent to our kids	
 		local has_wildcards = mc["*"]
-		if(has_wildcards) then
-			print("HAS WILDCARDS ["..k.."]")
-			parent = k
-		else
-			parent = nil
-		end
-
+		if(has_wildcards) then parent = k end
 
 		-- check for whole node deletes
 		if(mode == "-" or (dc and dc._deleted)) then
-			print("-" .. label .. " {")
-			show_config(ac, dc, mc, indent, "-", parent)
-			print("-}")
+			show_node(ac, dc, mc, label, indent, "-", k)
 			if(not (dc and dc._added)) then goto continue end
 		end
 
@@ -624,9 +629,7 @@ function show_config(active, delta, master, indent, mode, parent)
 		if(dc and dc._added) then mode = "+" end
 
 		-- now recurse for normal or added nodes
-		print(mode .. label .. " {")
-		show_config(ac, dc, mc, indent, mode, parent)
-		print(mode .. "}")
+		show_node(ac, dc, mc, label, indent, mode, k)
 
 ::continue::
 	end
