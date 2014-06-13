@@ -563,13 +563,19 @@ end
 --
 -- Serialise the config
 --
-function show_config(active, delta, master, indent, mode)
+function show_config(active, delta, master, indent, mode, parent)
+	-- 
+	-- setup some sensible defaults
+	--
+	mode = mode or " "
+	indent = indent or 0
+
 	--
 	-- build a combined list of keys from active and delta
 	-- so we catch the adds. We also takes the keys from
 	-- master so we can catch field level stuff.
 	-- 
-	for _,k in ipairs(all_keys(active, delta, master)) do
+	for _,k in ipairs(all_keys(active or {}, delta or {}, master or {})) do
 		-- we don't want the wildcard key
 		if(k == "*") then goto continue end
 
@@ -588,16 +594,39 @@ function show_config(active, delta, master, indent, mode)
 		local ac = active and active[k]
 		local dc = delta and delta[k]
 
-		print("ac="..tostring(ac).." dc="..tostring(dc).." mc="..tostring(mc))
+		-- if we got a parent name passed down then we need
+		-- to alter the way we show our name
+		local label = k
+		if(parent) then
+			label = parent .. " " .. k
+		end
+
+		-- if we have wildcard children then we need to pass
+		-- our name as parent to our kids	
+		local has_wildcards = mc["*"]
+		if(has_wildcards) then
+			print("HAS WILDCARDS ["..k.."]")
+			parent = k
+		else
+			parent = nil
+		end
 
 
-		print("K: "..k)
+		-- check for whole node deletes
+		if(mode == "-" or (dc and dc._deleted)) then
+			print("-" .. label .. " {")
+			show_config(ac, dc, mc, indent, "-", parent)
+			print("-}")
+			if(not (dc and dc._added)) then goto continue end
+		end
 
-		-- if we get here then we are something with children
-		-- so we need to recurse
-		print(" " .. k .. " {")
-		show_config(ac, dc, mc)
-		print(" " .. "}")
+		-- if we are adding then force mode
+		if(dc and dc._added) then mode = "+" end
+
+		-- now recurse for normal or added nodes
+		print(mode .. label .. " {")
+		show_config(ac, dc, mc, indent, mode, parent)
+		print(mode .. "}")
 
 ::continue::
 	end
@@ -605,6 +634,8 @@ end
 
 
 --TODO -- fix the apply_delta to be based on master (might be easier)
+--
+
 
 show_config(CONFIG.active, CONFIG.delta, CONFIG.master)
 --process_delta(CONFIG.delta, CONFIG.master)
