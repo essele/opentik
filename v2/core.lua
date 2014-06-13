@@ -28,6 +28,24 @@ CONFIG.master = {
 	},
 	["tinc"] = {
 		_depends = { "interface", "dns" }
+	},
+	["fred"] = {
+		["*"] = {
+			["value"] = {
+				_type = "blah"
+			}
+		}
+	},
+	["test"] = {
+		["test2"] = {
+			["test3"] = {
+				["test4"] = {
+					["value"] = {
+						_type = "blah"
+					}
+				}
+			}
+		}
 	}
 }
 
@@ -70,11 +88,22 @@ CONFIG.active = {
 		["dns"] = {
 			resolvers = { "8.8.8.8", "8.8.4.4" }
 		},
+		["test"] = {
+			["test2"] = {
+				["test3"] = {
+					["test4"] = {
+						value = 77
+					}
+				}
+			}
+		},
 		["interface"] = {
 			["ethernet"] = {
 				["0"] = {
 					name = "eth0",
-					address = "192.168.95.123/24"
+					address = "192.168.95.123/24",
+					comment = {"this is a comment about this interface",
+								"with two lines"}
 				},
 				["2"] = {
 					name = "fred",
@@ -89,6 +118,20 @@ CONFIG.delta = {
 			resolvers = { "1.1.1.1", "2.2.2.2" },
 			_changed = 1,
 			_fields_changed = { ["resolvers"] = 1 }
+		},
+		["fred"] = {
+			["one"] = {
+				value = "blah blah blah",
+				_added = 1
+			},
+			["two"] = {
+				value = "abc abc abc",
+				_added = 1
+			},
+			["three"] = {
+				value = "x y z",
+				_added = 1
+			}
 		},
 		["interface"] = {
 			["pppoe"] = {
@@ -134,13 +177,12 @@ CONFIG.delta = {
 						policy = "ACCEPT",
 						["rule"] = {
 							["10"] = {
-								comment = "blah",
+								comment = {"blah"},
 								_changed = 1,
 								_fields_added = { ["comment"] = 1 }
 							},
 							["20"] = {
 								_added = 1,
-								comment = "",
 								target = "ACCEPT",
 								match = "-m tcp -p tcp"
 							}
@@ -507,40 +549,41 @@ function process_delta(delta, master)
 	end
 end
 
+
+-- ==============================================================================
+-- ==============================================================================
+--
+-- These are the functions that support show_config, a means of both displaying
+-- and serialising the configuration.
+--
+-- In "show" was also support highlighting of delta's using +, - and | 
+--
+-- ==============================================================================
+-- ==============================================================================
+
 --
 -- See if the given node has children (master)
 --
 function has_children(master)
 	for k,v in pairs(master) do
-		if(string.sub(k, 1, 1) ~= "_") then
-			-- TODO: do we need to check the type is table?
-			return true
-		end
+		if(string.sub(k, 1, 1) ~= "_") then return true end
 	end
 	return false
 end
 
 --
--- List the childen for a given node (master)
+-- Actually show the specific field
 --
-function list_children(master)
-	local rc = {}
-
-	if(master._order) then return master._order end
-
-	for k,v in pairs(master) do
-		if(string.sub(k, 1, 1) ~= "_") then
-			table.insert(rc, k)
-		end
-	end
-	return rc
+function show_item(operation, indent, key, value)
+	return operation .. string.rep(" ", indent) .. key .. " " .. value .. "\n"
 end
 
 --
--- Display a given field
+-- Display a given field with the appropriate operation symbol
 --
 function show_field(ac, dc, mc, k, indent, mode)
 	local operation, value
+	local op = ""
 
 	if(mode == "+" or (dc and dc._fields_added and dc._fields_added[k])) then
 		operation = "+"
@@ -556,51 +599,120 @@ function show_field(ac, dc, mc, k, indent, mode)
 		value = ac and ac[k]
 	end
 	if(value) then
-		print(operation .. string.rep(" ", indent+4) .. k .. " " .. tostring(value))
+		-- comments are actually lists, so we just change the key
+		if(k == "comment") then k = "#" end
+
+		-- if we are a table then just show each item
+		if(type(value) == "table") then
+			-- TODO: handle list adds/removes
+			for _,v in ipairs(value) do
+				op = op .. show_item(operation, indent, k, v)
+			end
+		else
+			op = op .. show_item(operation, indent, k, value)
+		end
 	end
+	return op
 end
 
+--
+-- Handle the labels on a node, and recurse if needed
+--
 function show_node(ac, dc, mc, label, indent, mode, k)
 	local parent = nil
 	local has_wildcards = mc["*"]
 
 	if(has_wildcards) then
-		show_config(ac, dc, mc, indent+4, mode, k)
+		return show_config(ac, dc, mc, indent, mode, k)
 	else
-		print(mode .. string.rep(" ", indent) .. label .. " {") 
-		show_config(ac, dc, mc, indent, mode, nil)
-		print(mode .. string.rep(" ", indent) .. "}")
+		return mode .. string.rep(" ", indent) .. label .. " {" .. "\n" ..
+				show_config(ac, dc, mc, indent+4, mode, nil) ..
+					mode .. string.rep(" ", indent) .. "}" .. "\n"
 	end
 end
 
 --
--- Serialise the config
+-- Pull out all the relevant keys from active, delta and master
+-- and then sort them, either based on master._order or just
+-- put comments first and then the rest alphabetically
+--
+function ordered_fields(active, delta, master)
+	--
+	-- first build the complete list...
+	--
+	local keys = {}
+	if(active) then for k,_ in pairs(active) do keys[k] = 1 end end
+	if(delta) then for k,_ in pairs(delta) do keys[k] = 1 end end
+	if(master) then for k,_ in pairs(master) do keys[k] = 1 end end
+	--
+	-- now start populating the results... comment first, then
+	-- based on master.order...
+	--
+	local klist = {}
+	if(keys["comment"]) then
+		table.insert(klist, "comment")
+		keys["comment"] = nil
+	end
+	if(master and master._order) then
+		for _,k in ipairs(master._order) do
+			if(keys[k]) then
+				table.insert(klist, k)
+				keys[k] = nil
+			end
+		end
+	end
+	--
+	-- now we build a list of the rest (removing directives), sort
+	-- it, and then finish...
+	--
+	local left = {}
+	for k,_ in pairs(keys) do
+		if(string.sub(k, 1, 1) ~= "_") then
+			table.insert(left, k)
+		end
+	end
+	table.sort(left)
+	for _,k in ipairs(left) do table.insert(klist, k) end
+	return klist
+end
+
+--
+-- Show the config in a human and machine readable form
 --
 function show_config(active, delta, master, indent, mode, parent)
+	local op = ""
 	-- 
 	-- setup some sensible defaults
 	--
 	mode = mode or " "
 	indent = indent or 0
 
+	print("PARENT="..tostring(parent).." INDENT="..indent)
+
 	--
 	-- build a combined list of keys from active and delta
 	-- so we catch the adds. We also takes the keys from
 	-- master so we can catch field level stuff.
 	-- 
-	for _,k in ipairs(all_keys(active or {}, delta or {}, master or {})) do
+	for _,k in ipairs(ordered_fields(active, delta, master)) do
 		-- we don't want the wildcard key
 		if(k == "*") then goto continue end
 
 		-- is this a field to show
 		local mc = master and (master[k] or master["*"])
 
+		-- comments are a special case since they don't have a master
+		-- record
+		if(k == "comment") then
+			op = op .. show_field(active, delta, master, k, indent, mode)
+		end
+
 		-- if we don't have a master then we don't do anything
 		if(not mc) then goto continue end
 
 		-- are we a field?
 		if(not has_children(mc)) then
-			show_field(active, delta, master, k, indent, mode)
+			op = op .. show_field(active, delta, master, k, indent, mode)
 			goto continue
 		end
 
@@ -614,14 +726,9 @@ function show_config(active, delta, master, indent, mode, parent)
 			label = parent .. " " .. k
 		end
 
-		-- if we have wildcard children then we need to pass
-		-- our name as parent to our kids	
-		local has_wildcards = mc["*"]
-		if(has_wildcards) then parent = k end
-
 		-- check for whole node deletes
 		if(mode == "-" or (dc and dc._deleted)) then
-			show_node(ac, dc, mc, label, indent, "-", k)
+			op = op .. show_node(ac, dc, mc, label, indent, "-", k)
 			if(not (dc and dc._added)) then goto continue end
 		end
 
@@ -629,18 +736,24 @@ function show_config(active, delta, master, indent, mode, parent)
 		if(dc and dc._added) then mode = "+" end
 
 		-- now recurse for normal or added nodes
-		show_node(ac, dc, mc, label, indent, mode, k)
+		op = op .. show_node(ac, dc, mc, label, indent, mode, k)
 
 ::continue::
 	end
+	return op
 end
 
 
 --TODO -- fix the apply_delta to be based on master (might be easier)
 --
 
+op = show_config(CONFIG.active, CONFIG.delta, CONFIG.master)
+print("OK")
+print(op)
+print("DONE")
 
-show_config(CONFIG.active, CONFIG.delta, CONFIG.master)
+
+--show_config(CONFIG.active, nil, CONFIG.master)
 --process_delta(CONFIG.delta, CONFIG.master)
 
 --apply_delta(CONFIG.active, CONFIG.delta, "interface")
