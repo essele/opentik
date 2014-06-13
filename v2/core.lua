@@ -213,6 +213,7 @@ end
 --
 -- In a delta we sometimes need to know if there is any valid content
 -- (other than directives)
+-- TODO: is this the same has has children?
 --
 function has_content(delta)
 	for k,v in pairs(delta) do
@@ -221,6 +222,24 @@ function has_content(delta)
 	return false
 end
 
+--
+-- For a set of hashes, pull out all of the unique (non directive)
+-- keys and return a sorted array of them
+--
+function all_keys(...)
+	local keys = {}
+	local klist = {}
+	for _,arr in ipairs({...}) do
+		if(arr) then
+			for k,_ in pairs(arr) do 
+				if(string.sub(k, 1, 1) ~= "_") then keys[k] = 1 end
+			end
+		end
+	end
+	for k,_ in pairs(keys) do table.insert(klist, k) end
+	table.sort(klist)
+	return klist
+end
 
 --
 -- Recursive processing of config changes, delta[key] must be a table
@@ -460,7 +479,7 @@ function node_walk(path, dnode, mnode)
 		end
 		-- tidy up if we are empty...
 		print("PATH="..npath.."  leaf="..tostring(is_leaf))
-		if(dnode[k] and not has_content(dnode[k])) then dnode[k] = nil; end
+		if(dnode[k] and not has_content(dnode[k])) then dnode[k] = nil end
 ::continue::
 	end
 	
@@ -488,16 +507,107 @@ function process_delta(delta, master)
 	end
 end
 
+--
+-- See if the given node has children (master)
+--
+function has_children(master)
+	for k,v in pairs(master) do
+		if(string.sub(k, 1, 1) ~= "_") then
+			-- TODO: do we need to check the type is table?
+			return true
+		end
+	end
+	return false
+end
+
+--
+-- List the childen for a given node (master)
+--
+function list_children(master)
+	local rc = {}
+
+	if(master._order) then return master._order end
+
+	for k,v in pairs(master) do
+		if(string.sub(k, 1, 1) ~= "_") then
+			table.insert(rc, k)
+		end
+	end
+	return rc
+end
+
+--
+-- Display a given field
+--
+function show_field(ac, dc, mc, k, indent, mode)
+	local operation, value
+
+	if(mode == "+" or (dc and dc._fields_added and dc._fields_added[k])) then
+		operation = "+"
+		value = dc[k]
+	elseif(mode == "-" or (dc and dc._fields_deleted and dc._fields_deleted[k])) then
+		operation = "-"
+		value = ac and ac[k]
+	elseif(dc and dc._fields_changed and dc._fields_changed[k]) then
+		operation = "|"
+		value = dc and dc[k]
+	else
+		operation = " "
+		value = ac and ac[k]
+	end
+	if(value) then
+		print(operation .. "  " .. k .. " " .. tostring(value))
+	end
+end
 
 --
 -- Serialise the config
 --
-function serialise(delta, active, master)
-	
+function show_config(active, delta, master, indent, mode)
+	--
+	-- build a combined list of keys from active and delta
+	-- so we catch the adds. We also takes the keys from
+	-- master so we can catch field level stuff.
+	-- 
+	for _,k in ipairs(all_keys(active, delta, master)) do
+		-- we don't want the wildcard key
+		if(k == "*") then goto continue end
+
+		-- is this a field to show
+		local mc = master and (master[k] or master["*"])
+
+		-- if we don't have a master then we don't do anything
+		if(not mc) then goto continue end
+
+		-- are we a field?
+		if(not has_children(mc)) then
+			show_field(active, delta, master, k, indent, mode)
+			goto continue
+		end
+
+		local ac = active and active[k]
+		local dc = delta and delta[k]
+
+		print("ac="..tostring(ac).." dc="..tostring(dc).." mc="..tostring(mc))
+
+
+		print("K: "..k)
+
+		-- if we get here then we are something with children
+		-- so we need to recurse
+		print(" " .. k .. " {")
+		show_config(ac, dc, mc)
+		print(" " .. "}")
+
+::continue::
+	end
 end
 
 
-process_delta(CONFIG.delta, CONFIG.master)
+--TODO -- fix the apply_delta to be based on master (might be easier)
+
+show_config(CONFIG.active, CONFIG.delta, CONFIG.master)
+--process_delta(CONFIG.delta, CONFIG.master)
 
 --apply_delta(CONFIG.active, CONFIG.delta, "interface")
 
