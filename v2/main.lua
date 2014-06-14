@@ -60,6 +60,7 @@ CONFIG.master = {
 		["test2"] = {
 			["test3"] = {
 				["test4"] = {
+					_function = function() return true end,
 					["value"] = {
 						_type = "blah"
 					}
@@ -133,9 +134,10 @@ CONFIG.delta = {
 			_changed = 1,
 			_fields_changed = { ["resolvers"] = 1 }
 		},
---[[
 		["test"] = {
+			_added = 1,
 			["test2"] = {
+				_added = 1,
 				["test3"] = {
 					_added = 1,
 					["test4"] = {
@@ -160,7 +162,6 @@ CONFIG.delta = {
 				_added = 1
 			}
 		},
-]]--
 		["interface"] = {
 			["pppoe"] = {
 				["0"] = {
@@ -432,6 +433,7 @@ function node_walk(path, dnode, mnode, anode)
 	local keys = {}
 	for k, v in pairs(dnode) do
 		if(string.sub(k, 1, 1) ~= "_") then
+			print("KK="..k)
 			if(dnode[k]._deleted) then
 				table.insert(keys, "D "..k)
 				if(dnode[k]._added) then
@@ -512,6 +514,8 @@ function node_walk(path, dnode, mnode, anode)
 			error("leaf item with function definition")
 		end
 
+		print("item="..k.." is_leaf="..tostring(is_leaf))
+
 		if(func) then
 			local rc, err
 
@@ -549,6 +553,7 @@ function node_walk(path, dnode, mnode, anode)
 			--
 			if(v._added) then
 				print("WOULD CREATE")
+				anode[k] = {}
 			end
 			-- we should recurse, but only if we aren't a leaf...
 			if(not is_leaf) then
@@ -587,6 +592,77 @@ function process_delta(delta, master, active)
 	end
 end
 
+--
+-- do we have child nodes?
+--
+function has_children(table)
+	for k,v in pairs(table) do
+		if(string.sub(k, 1, 1) ~= "_") then return true end
+	end
+	return false
+end
+function list_children(table)
+	local rc = {}
+	for k,v in pairs(table) do
+		if(string.sub(k, 1, 1) ~= "_") then table.insert(rc, k) end
+	end
+	return rc
+end
+
+--
+-- Walk the delta tree looking for changes that need to be processed
+-- by a function. If we decide we need to call a function then we
+-- check to see if any dependencies (and partner dependencies) are
+-- met. That means that none of the dependencies are still showing
+-- in the delta (i.e. have uncommitted changes)
+--
+function new_do_delta(delta, master, active)
+	--
+	-- if we have a function and anything has changed then
+	-- we will need to call it (if our dependencies are met)
+	--
+	local func = master._function
+	local need_exec = false
+
+	-- look at the items we contain, they will be fields (no children)
+	-- or containers (children)
+
+	for k,dc in pairs(delta) do
+		if(string.sub(k, 1, 1) == "_") then goto continue end
+
+		-- work out the master for the item
+		local mc = master[k] or master["*"]
+		if(not mc) then goto continue end
+
+		-- if we have children then we need to recurse further
+		if(has_children(mc)) then
+			print("RECURSING for: "..k)
+			if(new_do_delta(dc, mc, active and active[k])) then
+				need_exec = true
+			end
+		end
+::continue::
+	end
+	--
+	-- if we have been added, or changed then we need to exec
+	--
+	if(delta._added or delta._changed) then need_exec = true end
+
+	--
+	-- if we are deleted and we have a function then we need to
+	-- call it separately for the delete, then maybe again for
+	-- the add/change
+	--
+	if(func) then
+		if(delta._deleted) then
+			print("Would call func for delete")
+		end
+		if(need_exec) then
+			print("Would call func for add/change/child")
+		end
+	end
+end
+
 
 --TODO -- fix the apply_delta to be based on master (might be easier)
 --
@@ -600,8 +676,10 @@ end
 
 --show_config(CONFIG.active, nil, CONFIG.master)
 --process_delta(CONFIG.delta, CONFIG.master, CONFIG.active)
-op = show_config(CONFIG.active, CONFIG.delta, CONFIG.master)
-print(op)
+--op = show_config(CONFIG.active, CONFIG.master)
+--print(op)
+
+new_do_delta(CONFIG.delta, CONFIG.master, CONFIG.active)
 
 --apply_delta(CONFIG.active, CONFIG.delta, "interface")
 

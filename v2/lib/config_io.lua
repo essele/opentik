@@ -52,7 +52,6 @@ end
 function remove_from_list(list, item)
 	local p = 0
 	for i = 1,#list do
-		print("i="..i.." blah")
 		if(list[i] == item) then 
 			p = i 
 			break 
@@ -132,10 +131,11 @@ end
 local function show_field(ac, dc, mc, k, indent, mode)
 	local operation, value
 	local op = ""
+		print("Key is "..k)
 
 	if(mode == "+" or (dc and dc._fields_added and dc._fields_added[k])) then
 		operation = "+"
-		value = dc[k]
+		value = dc and dc[k]
 	elseif(mode == "-" or (dc and dc._fields_deleted and dc._fields_deleted[k])) then
 		operation = "-"
 		value = ac and ac[k]
@@ -153,11 +153,6 @@ local function show_field(ac, dc, mc, k, indent, mode)
 		-- if we are a table then just show each item
 		if(type(value) == "table") then
 			op = op .. show_list(ac and ac[k], operation, indent, k, value)
---			op = op .. "LIST"
-			-- TODO: handle list adds/removes
---			for _,v in ipairs(value) do
---				op = op .. show_item(operation, indent, k, v)
---			end
 		else
 			op = op .. show_item(operation, indent, k, value)
 		end
@@ -229,12 +224,11 @@ end
 --
 -- Show the config in a human and machine readable form
 --
-function show_config(active, delta, master, indent, mode, parent)
+function show_config(active, delta, master, indent, pmode, parent)
 	local op = ""
 	-- 
 	-- setup some sensible defaults
 	--
-	mode = mode or " "
 	indent = indent or 0
 
 	--
@@ -245,6 +239,9 @@ function show_config(active, delta, master, indent, mode, parent)
 	for _,k in ipairs(ordered_fields(active, delta, master)) do
 		-- we don't want the wildcard key
 		if(k == "*") then goto continue end
+
+		-- inherit parent mode if set
+		mode = pmode or " "
 
 		-- is this a field to show
 		local mc = master and (master[k] or master["*"])
