@@ -244,42 +244,33 @@ CONFIG.delta = {
 -- For a given path, return the relevant part of the delta and the
 -- master
 --
-function get_tables(path, delta, master)
+function get_tables(path, delta, master, active)
 	local d = delta;
 	local m = master;
+	local a = active
 
 	for key in string.gmatch(path, "([^/]+)") do
-		local nodekey = key
-		if(m and not m[nodekey] and m["*"]) then nodekey = "*" end
-
-		if(d and d[key]) then d = d[key] else d = nil end
-		if(m and m[nodekey]) then m = m[nodekey] else m = nil end
+		m = m and (m[key] or m["*"])
+		d = d and d[key]
+		a = a and a[key]
 	end
-	return d, m
+	return d, m, a
 end
 
 --
--- For a given path, return the parent (which will allow us to delete
--- any sub nodes etc)...
+-- For a given path, return the node 
 --
 function get_node(path, table)
 	local t = table
 
 	for key in string.gmatch(path, "([^/]+)") do
-		if(t and t[key]) then t = t[key] else t = nil end
+		t = t and t[key]
+		if(not t) then break end
 	end
 	return t
 end
+node_exists = get_node
 
---
--- Give a node path, see if it exists in the (delta) table, we use the get_tables
--- function to do this simply.
---
-function node_exists(path, table)
-	local d = get_tables(path, table, nil)
-
-	return d ~= nil
-end
 
 --
 -- In a delta we sometimes need to know if there is any valid content
@@ -395,14 +386,14 @@ end
 -- For full dependencies we have to look at partners as well and keep recursing
 -- until we have looked at everything
 --
-function get_full_dependencies(path, hashref)
-	local d, m = get_tables(path, delta, master)
+function get_full_dependencies(path, originals, hashref)
+	local d, m = get_tables(path, originals.delta, originals.master)
 	local rc = {}
 
 	-- keep track of things we have dealt with...
 	if(not hashref) then hashref = {} end
 
-	rc = get_node_dependencies(path, CONFIG.delta, CONFIG.master)
+	rc = get_node_dependencies(path, originals.delta, originals.master)
 	hashref[path] = 1;
 
 	if(m and m._partners) then
@@ -413,6 +404,18 @@ function get_full_dependencies(path, hashref)
 		end
 	end
 	return rc
+end
+
+--
+-- For a given path, see if all the dependencies are met
+--
+function dependencies_met(path, originals)
+	local deps = get_full_dependencies(path, originals)
+	for _,d in ipairs(deps) do
+		print("Checking dep: " .. d)
+		if(get_node(d, originals.delta)) then return false end
+	end
+	return true
 end
 
 --
@@ -592,6 +595,16 @@ function process_delta(delta, master, active)
 	end
 end
 
+-- ==============================================================================
+-- ==============================================================================
+--
+-- These functions support going through the delta and working out which functions
+-- we need to call.
+--
+-- ==============================================================================
+-- ==============================================================================
+
+
 --
 -- do we have child nodes?
 --
@@ -601,11 +614,12 @@ function has_children(table)
 	end
 	return false
 end
-function list_children(table)
+function list_children(ctable)
 	local rc = {}
-	for k,v in pairs(table) do
+	for k,v in pairs(ctable) do
 		if(string.sub(k, 1, 1) ~= "_") then table.insert(rc, k) end
 	end
+	table.sort(rc)
 	return rc
 end
 
@@ -616,49 +630,89 @@ end
 -- met. That means that none of the dependencies are still showing
 -- in the delta (i.e. have uncommitted changes)
 --
-function new_do_delta(delta, master, active)
+function new_do_delta(delta, master, active, originals, path)
 	--
 	-- if we have a function and anything has changed then
 	-- we will need to call it (if our dependencies are met)
 	--
 	local func = master._function
 	local need_exec = false
+	local work_done = false
+	local clear_node = false
 
-	-- look at the items we contain, they will be fields (no children)
-	-- or containers (children)
+	-- prepare path if not set
+	path = path or ""
 
-	for k,dc in pairs(delta) do
+	-- look at the items we contain...
+	for _,k in ipairs(list_children(delta)) do
 		if(string.sub(k, 1, 1) == "_") then goto continue end
 
-		-- work out the master for the item
+		-- work out the master for the item, just clear the key
+		-- if we don't have one (i.e. the delta is garbage)
+		local dc = delta[k]
 		local mc = master[k] or master["*"]
-		if(not mc) then goto continue end
+		if(not mc) then 
+			delta[k] = nil
+			goto continue 
+		end
 
 		-- if we have children then we need to recurse further
 		if(has_children(mc)) then
-			print("RECURSING for: "..k)
-			if(new_do_delta(dc, mc, active and active[k])) then
-				need_exec = true
-			end
+			local ne, wd, cn = new_do_delta(dc, mc, active and active[k], originals, path.."/"..k)
+			if(ne) then need_exec = true end
+			if(wd) then work_done = true end
+			if(cn) then delta[k] = nil end
 		end
 ::continue::
 	end
 	--
-	-- if we have been added, or changed then we need to exec
+	-- if we have been added, deleted, or changed then we need to exec
 	--
-	if(delta._added or delta._changed) then need_exec = true end
+	if(delta._added or delta._deleted or delta._changed) then need_exec = true end
 
 	--
-	-- if we are deleted and we have a function then we need to
-	-- call it separately for the delete, then maybe again for
-	-- the add/change
-	--
-	if(func) then
-		if(delta._deleted) then
-			print("Would call func for delete")
+	-- if we are ready then check our dependencies and execute if 
+	--	
+	if(func and need_exec) then
+		--
+		-- check our dependencies
+		--
+		if(not dependencies_met(path, originals)) then
+			print("PATH: " .. path.. " -- DEPS FAIL")
+			return false, work_done, false
 		end
-		if(need_exec) then
-			print("Would call func for add/change/child")
+
+		print("PATH: " .. path.. " -- EXEC")
+
+		-- TODO: apply the delta changes if we are successful
+		-- TODO: find a way of propogating errors back up (return nil?)
+
+		work_done = true
+		clear_node = true
+	end
+
+	--
+	-- If delta doesn't have anything left in it then we need to signal
+	-- the key to be cleared
+	--
+	if(not has_children(delta)) then clear_node = true end
+	return need_exec, work_done, clear_node
+end
+
+function commit_delta(delta, master, active, originals)
+	while(1) do
+		local need_exec, work_done = new_do_delta(delta, master, active, originals)
+		if(not work_done) then
+			print("NO WORK DONE")
+			break
+		end
+		for k,v in pairs(delta) do
+			print("STILL HAVE: "..k)
+		end
+		local a = count_elements(delta)
+		print("A="..a)
+		if(a == 0) then
+			break
 		end
 	end
 end
@@ -679,7 +733,7 @@ end
 --op = show_config(CONFIG.active, CONFIG.master)
 --print(op)
 
-new_do_delta(CONFIG.delta, CONFIG.master, CONFIG.active)
+commit_delta(CONFIG.delta, CONFIG.master, CONFIG.active, CONFIG)
 
 --apply_delta(CONFIG.active, CONFIG.delta, "interface")
 
