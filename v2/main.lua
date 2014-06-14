@@ -135,11 +135,11 @@ CONFIG.delta = {
 			_fields_changed = { ["resolvers"] = 1 }
 		},
 		["test"] = {
-			_added = 1,
+--			_added = 1,
 			["test2"] = {
-				_added = 1,
+--				_added = 1,
 				["test3"] = {
-					_added = 1,
+--					_added = 1,
 					["test4"] = {
 						value = 77,
 						_added = 1
@@ -418,182 +418,6 @@ function dependencies_met(path, originals)
 	return true
 end
 
---
--- We walk through the delta checking each node out, we look for dependencies
--- and skip any node where the dependencies are not complete.
---
-
-function node_walk(path, dnode, mnode, anode)
-	local work_done = false
-
-	--
-	-- we want to process the keys in order, so we pull out the keys
-	-- and then sort them, for items that we are deleting we want
-	-- them to be handled early (subject to dependencies) and if
-	-- we are deleting and then adding we will need to call twice
-	-- and we should only delete the first time round
-	--
-	local keys = {}
-	for k, v in pairs(dnode) do
-		if(string.sub(k, 1, 1) ~= "_") then
-			print("KK="..k)
-			if(dnode[k]._deleted) then
-				table.insert(keys, "D "..k)
-				if(dnode[k]._added) then
-					table.insert(keys, "P "..k)
-				end
-			else
-				table.insert(keys, "P "..k)
-			end
-		end
-	end
-	table.sort(keys)
-
-	--
-	-- Now we can process the keys..
-	--
-	for i, k in ipairs(keys) do
-		print("KKKKKKKKKKKKKKK = "..k)
-		-- remove the + or -
-		k = string.sub(k, 3)
-
-		-- work out our path, and go...
-		local v = dnode[k]
-		local nodekey = k
-		local npath = path .. "/" .. k
-
-		if(not mnode[nodekey] and mnode["*"]) then nodekey = "*" end
-
-		print("Looking at: " .. npath)
-
-		--
-		-- if we can't find the node in the master structure then it is
-		-- an unknown node, we will just ignore it (and remove it from
-		-- the dnode)
-		if(mnode[nodekey] == nil) then
-			print("Unknown node, ignoring: " .. nodekey)
-			dnode[k] = nil
-			goto continue
-		end
-
-		--
-		-- At this point we have a valid node, we need to check if it's
-		-- dependent on something, and see if we have covered that. If not
-		-- we just skip it and will pick it up on the next run.
-		--
-		-- get_full_dependencies does a recursive look at partners as well
-		-- so we will only show as ready to process once any partners are also
-		-- ready to go
-		--
-		local depends = get_full_dependencies(npath)
-
-		if(depends) then
-			for i, d in ipairs(depends) do
-				print("Dependency: "..d)
-				if(node_exists(d, CONFIG.delta)) then
-					print("NODE NOT PROCESSED: "..d)
-					goto continue
-				end
-			end
-		end
-
-		--
-		-- if we have a function at this level, then we will call the
-		-- function with the node and the master information so that 
-		-- it can process any children.
-		--
-		-- If there is no function then we recurse
-		--
-		local nodetype = mnode[nodekey]._type
-		local func = mnode[nodekey]._function
-		local is_list = nodetype and string.sub(nodetype, 1, 5) == "list/"
-		local is_leaf = type(v) ~= "table" or is_list
-
-		-- we should never get to a leaf unless we've missed out
-		-- a function definition in the master
-		if(is_leaf) then error("LEAF with no function! "..nodekey) end
-
-		if(func and is_leaf) then
-			error("leaf item with function definition")
-		end
-
-		print("item="..k.." is_leaf="..tostring(is_leaf))
-
-		if(func) then
-			local rc, err
-
-			print("Calling: " .. npath .. " [" .. tostring(func) .. "]")
-
-			rc, err = pcall(func, npath, k, v, mnode[nodekey])
-			if(not rc) then
-				print("Call failed.")
-				print("ERR: " .. err)
-			end
-
-			-- at this point we should have successfully commited this node
-			-- so we need to update the active configuration, if we had a
-			-- _deleted, then this operation will be a delete (only), we will
-			-- be called again if we need to add
-			
---			local parent = get_node(path, CONFIG.active)
-			parent = anode
-			print("Parent="..tostring(parent))
-		
-			-- if we don't have a parent then 
-
-			if(v._deleted) then
-				parent[k] = nil
-				v._deleted = nil
-			else
-				apply_delta(parent, dnode, k)
-				dnode[k] = nil;
-			end
-			work_done = true;
-		else
-			--
-			-- there might not be a function, but structurally we may need
-			-- to create our node in the active config
-			--
-			if(v._added) then
-				print("WOULD CREATE")
-				anode[k] = {}
-			end
-			-- we should recurse, but only if we aren't a leaf...
-			if(not is_leaf) then
-				if(node_walk(npath, v, mnode[nodekey], anode and anode[k])) then
-					work_done = true
-				end
-			end
-		end
-		-- tidy up if we are empty...
-		print("PATH="..npath.."  leaf="..tostring(is_leaf))
-		if(dnode[k] and not has_content(dnode[k])) then dnode[k] = nil end
-::continue::
-	end
-	
-	return work_done
-end
-
---
--- We need to run through the node list multiple times, we should process something
--- each time through otherwise there is a problem.
---
-function process_delta(delta, master, active)
-	while(1) do
-		if(not node_walk("", delta, master, active)) then
-			print("NO WORK DONE!")
-			break
-		end
-		for k,v in pairs(delta) do
-			print("Still have -- " .. k)
-		end
-		local a = count_elements(delta)
-		print("A="..a)
-		if(a == 0) then
-			break
-		end
-	end
-end
 
 -- ==============================================================================
 -- ==============================================================================
@@ -630,7 +454,7 @@ end
 -- met. That means that none of the dependencies are still showing
 -- in the delta (i.e. have uncommitted changes)
 --
-function new_do_delta(delta, master, active, originals, path)
+function new_do_delta(delta, master, active, originals, path, key)
 	--
 	-- if we have a function and anything has changed then
 	-- we will need to call it (if our dependencies are met)
@@ -640,8 +464,14 @@ function new_do_delta(delta, master, active, originals, path)
 	local work_done = false
 	local clear_node = false
 
-	-- prepare path if not set
+	-- prepare path by adding key (and initing when needed)
 	path = path or ""
+	if(key) then 
+		path = path .. "/" .. key 
+	end
+
+	TODO: make active the parent, make sure we have populated the child
+		  on the way in ... then delete on the way out if empty.
 
 	-- look at the items we contain...
 	for _,k in ipairs(list_children(delta)) do
@@ -658,7 +488,7 @@ function new_do_delta(delta, master, active, originals, path)
 
 		-- if we have children then we need to recurse further
 		if(has_children(mc)) then
-			local ne, wd, cn = new_do_delta(dc, mc, active and active[k], originals, path.."/"..k)
+			local ne, wd, cn = new_do_delta(dc, mc, active and active[k], originals, path, k)
 			if(ne) then need_exec = true end
 			if(wd) then work_done = true end
 			if(cn) then delta[k] = nil end
@@ -682,7 +512,15 @@ function new_do_delta(delta, master, active, originals, path)
 			return false, work_done, false
 		end
 
-		print("PATH: " .. path.. " -- EXEC")
+		print("PATH: " .. path.. " -- EXEC (key="..key..")")
+		local rc, err = pcall(func, path, key, delta, master)
+		if(not rc) then
+			print("Call failed.")
+			print("ERR: " .. err)
+		end
+
+		-- we need to parent at this point to apply the deltas, at least if its
+		-- a delete?? 
 
 		-- TODO: apply the delta changes if we are successful
 		-- TODO: find a way of propogating errors back up (return nil?)
@@ -717,9 +555,6 @@ function commit_delta(delta, master, active, originals)
 	end
 end
 
-
---TODO -- fix the apply_delta to be based on master (might be easier)
---
 
 -- cc = read_config("sample", CONFIG.master)
 -- print(show_config(cc, nil, CONFIG.master))
