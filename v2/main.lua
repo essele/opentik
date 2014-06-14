@@ -50,6 +50,7 @@ CONFIG.master = {
 	},
 	["fred"] = {
 		["*"] = {
+			_function = function() return true end,
 			["value"] = {
 				_type = "blah"
 			}
@@ -107,15 +108,6 @@ CONFIG.active = {
 		["dns"] = {
 			resolvers = { "8.8.8.8", "8.8.4.4" }
 		},
-		["test"] = {
-			["test2"] = {
-				["test3"] = {
-					["test4"] = {
-						value = 77
-					}
-				}
-			}
-		},
 		["interface"] = {
 			["ethernet"] = {
 				["0"] = {
@@ -134,11 +126,27 @@ CONFIG.active = {
 
 CONFIG.delta = {
 		["dns"] = {
-			resolvers = { "1.1.1.1", "2.2.2.2" },
+			resolvers = {
+				_items_deleted = { "8.8.4.4" },
+				_items_added = { "1.1.1.1", "2.2.2.2" },
+			},
 			_changed = 1,
 			_fields_changed = { ["resolvers"] = 1 }
 		},
+--[[
+		["test"] = {
+			["test2"] = {
+				["test3"] = {
+					_added = 1,
+					["test4"] = {
+						value = 77,
+						_added = 1
+					}
+				}
+			}
+		},
 		["fred"] = {
+			_added = 1,
 			["one"] = {
 				value = "blah blah blah",
 				_added = 1
@@ -152,6 +160,7 @@ CONFIG.delta = {
 				_added = 1
 			}
 		},
+]]--
 		["interface"] = {
 			["pppoe"] = {
 				["0"] = {
@@ -333,7 +342,7 @@ function apply_delta(table, delta, key)
 	-- now handle the adds and changes (and recursion for tables)
 	for k, v in pairs(delta[key]) do
 		-- ignore all the directives...
-		if(string.sub(k,1,1) == "_") then goto loop end
+		if(string.sub(k,1,1) == "_") then goto continue end
 
 		if(type(v) == "table") then
 			print("Recursing for: " ..k)
@@ -342,7 +351,7 @@ function apply_delta(table, delta, key)
 			print("Setting field: " ..k)
 			table[key][k] = v
 		end
-::loop::
+::continue::
 	end
 
 	-- before we return we should check if we are empty, if so we can
@@ -410,7 +419,7 @@ end
 -- and skip any node where the dependencies are not complete.
 --
 
-function node_walk(path, dnode, mnode)
+function node_walk(path, dnode, mnode, anode)
 	local work_done = false
 
 	--
@@ -497,7 +506,7 @@ function node_walk(path, dnode, mnode)
 
 		-- we should never get to a leaf unless we've missed out
 		-- a function definition in the master
-		if(is_leaf) then error("LEAF!") end
+		if(is_leaf) then error("LEAF with no function! "..nodekey) end
 
 		if(func and is_leaf) then
 			error("leaf item with function definition")
@@ -519,8 +528,11 @@ function node_walk(path, dnode, mnode)
 			-- _deleted, then this operation will be a delete (only), we will
 			-- be called again if we need to add
 			
-			local parent = get_node(path, CONFIG.active)
+--			local parent = get_node(path, CONFIG.active)
+			parent = anode
 			print("Parent="..tostring(parent))
+		
+			-- if we don't have a parent then 
 
 			if(v._deleted) then
 				parent[k] = nil
@@ -531,9 +543,16 @@ function node_walk(path, dnode, mnode)
 			end
 			work_done = true;
 		else
+			--
+			-- there might not be a function, but structurally we may need
+			-- to create our node in the active config
+			--
+			if(v._added) then
+				print("WOULD CREATE")
+			end
 			-- we should recurse, but only if we aren't a leaf...
 			if(not is_leaf) then
-				if(node_walk(npath, v, mnode[nodekey])) then
+				if(node_walk(npath, v, mnode[nodekey], anode and anode[k])) then
 					work_done = true
 				end
 			end
@@ -551,9 +570,9 @@ end
 -- We need to run through the node list multiple times, we should process something
 -- each time through otherwise there is a problem.
 --
-function process_delta(delta, master)
+function process_delta(delta, master, active)
 	while(1) do
-		if(not node_walk("", delta, master, delta, master)) then
+		if(not node_walk("", delta, master, active)) then
 			print("NO WORK DONE!")
 			break
 		end
@@ -572,16 +591,17 @@ end
 --TODO -- fix the apply_delta to be based on master (might be easier)
 --
 
-cc = read_config("sample", CONFIG.master)
-print(show_config(cc, nil, CONFIG.master))
+-- cc = read_config("sample", CONFIG.master)
+-- print(show_config(cc, nil, CONFIG.master))
 
 --op = show_config(CONFIG.active, CONFIG.delta, CONFIG.master)
---op = show_config(CONFIG.active, nil, CONFIG.master)
 --print(op)
 
 
 --show_config(CONFIG.active, nil, CONFIG.master)
---process_delta(CONFIG.delta, CONFIG.master)
+--process_delta(CONFIG.delta, CONFIG.master, CONFIG.active)
+op = show_config(CONFIG.active, CONFIG.delta, CONFIG.master)
+print(op)
 
 --apply_delta(CONFIG.active, CONFIG.delta, "interface")
 

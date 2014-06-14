@@ -1,5 +1,7 @@
 #!./luajit
 
+DO NOT USE ... see main.lua
+
 package.cpath = "./libs/?.so"
 
 require("lfs")
@@ -115,7 +117,11 @@ CONFIG.active = {
 
 CONFIG.delta = {
 		["dns"] = {
-			resolvers = { "1.1.1.1", "2.2.2.2" },
+--			resolvers = { "1.1.1.1", "2.2.2.2" }
+			resolvers = {
+				_items_deleted = { "8.8.8.8", "8.8.4.4" },
+				_items_added = { "1.1.1.1", "2.2.2.2" },
+			 },
 			_changed = 1,
 			_fields_changed = { ["resolvers"] = 1 }
 		},

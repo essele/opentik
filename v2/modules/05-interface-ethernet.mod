@@ -84,7 +84,7 @@ CONFIG.master["interface"]["ethernet"] = {
 		},
 		["speed"] = {
 			_type = "interface_speed"
-		}
+		},
 	},
 }
 

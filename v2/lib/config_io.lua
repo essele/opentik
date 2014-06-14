@@ -28,6 +28,42 @@
 -- ==============================================================================
 -- ==============================================================================
 
+
+--
+-- UTILITY FUNCTIONS MOVE!
+--
+function copy_table(table)
+	local rc = {}
+	for k,v in pairs(table) do
+		if(type(v) == "table") then
+			rc[k] = copy_table(v)
+		else
+			rc[k] = v
+		end
+	end
+	return rc
+end
+function is_in_list(list, item)
+	for _,v in ipairs(list) do
+		if(v == item) then return true end
+	end
+	return false
+end
+function remove_from_list(list, item)
+	local p = 0
+	for i = 1,#list do
+		print("i="..i.." blah")
+		if(list[i] == item) then 
+			p = i 
+			break 
+		end
+	end
+	if(p) then
+		table.remove(list, p)
+	end
+	return p
+end
+
 --
 -- See if the given node has children (master)
 --
@@ -43,6 +79,51 @@ end
 --
 local function show_item(operation, indent, key, value)
 	return operation .. string.rep(" ", indent) .. key .. " " .. value .. "\n"
+end
+
+--
+-- Handle the displaying of lists, if we are added or removed in entirety
+-- then we don't really care too much. If we are changed then we need to
+-- show individual item add and removes.
+--
+local function show_list(ac, operation, indent, key, value)
+	local op = ""
+
+	--
+	-- first we deal with the simple case of all add, all remove, or all same
+	--
+	if(operation ~= "|") then
+		for _,v in ipairs(value) do
+			op = op .. show_item(operation, indent, key, v)
+		end
+		return op
+	end
+
+	--
+	-- We show the original list, with any removes highlighted as removes. Each
+	-- remove must only operate once, so we remove them from the copy of the removes
+	-- list
+	--
+	local dels = (value._items_deleted and copy_table(value._items_deleted)) or {}
+	for _,v in ipairs(ac) do
+		if(is_in_list(dels, v)) then
+			operation = "-"
+			remove_from_list(dels, v)
+		else
+			operation = " "
+		end
+		op = op .. show_item(operation, indent, key, v)
+	end
+	--
+	-- Now we show any adds
+	--
+	local adds = value._items_added or {}
+	for _,v in ipairs(adds) do
+		op = op .. show_item("+", indent, key, v)
+	end
+
+	return op
+
 end
 
 --
@@ -71,10 +152,12 @@ local function show_field(ac, dc, mc, k, indent, mode)
 
 		-- if we are a table then just show each item
 		if(type(value) == "table") then
+			op = op .. show_list(ac and ac[k], operation, indent, k, value)
+--			op = op .. "LIST"
 			-- TODO: handle list adds/removes
-			for _,v in ipairs(value) do
-				op = op .. show_item(operation, indent, k, v)
-			end
+--			for _,v in ipairs(value) do
+--				op = op .. show_item(operation, indent, k, v)
+--			end
 		else
 			op = op .. show_item(operation, indent, k, value)
 		end
