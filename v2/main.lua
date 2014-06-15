@@ -268,87 +268,6 @@ node_exists = get_node
 
 
 --
--- In a delta we sometimes need to know if there is any valid content
--- (other than directives)
--- TODO: is this the same has has children?
---
-function has_content(delta)
-	for k,v in pairs(delta) do
-		if(string.sub(k, 1, 1) ~= "_") then return true end
-	end
-	return false
-end
-
---
--- For a set of hashes, pull out all of the unique (non directive)
--- keys and return a sorted array of them
---
-function all_keys(...)
-	local keys = {}
-	local klist = {}
-	for _,arr in ipairs({...}) do
-		if(arr) then
-			for k,_ in pairs(arr) do 
-				if(string.sub(k, 1, 1) ~= "_") then keys[k] = 1 end
-			end
-		end
-	end
-	for k,_ in pairs(keys) do table.insert(klist, k) end
-	table.sort(klist)
-	return klist
-end
-
---
--- Recursive processing of config changes, delta[key] must be a table
---
-function apply_delta(table, delta, key)
-	if(delta[key]._deleted) then
-		print("Deleted key: " .. key)
-		table[key] = nil
-	end
-
-	-- if delta[key] is a table and doesn't have any content we will return
-	if(not has_content(delta[key])) then
-		return
-	end
-
-	-- we know we have content now, so create the object if needed
-	if(not table[key]) then
-		table[key] = {}
-		print("Prepared table: " .. key)
-	end
-
-	-- first we process any deleted fields
-	if(delta[key]._fields_deleted) then
-		for k, v in pairs(delta[key]._fields_deleted) do
-			print("Deleting field: " ..k)
-			table[key][k] = nil
-		end
-	end
-
-	-- now handle the adds and changes (and recursion for tables)
-	for k, v in pairs(delta[key]) do
-		-- ignore all the directives...
-		if(string.sub(k,1,1) == "_") then goto continue end
-
-		if(type(v) == "table") then
-			print("Recursing for: " ..k)
-			apply_delta(table[key], delta[key], k)
-		else
-			print("Setting field: " ..k)
-			table[key][k] = v
-		end
-::continue::
-	end
-
-	-- before we return we should check if we are empty, if so we can
-	-- delete ourselves, just to keep the table tidy
-	if(not has_content(table[key])) then
-		table[key] = nil;
-	end
-end
-
---
 -- Utility function to do useful array stuff
 --
 function append_array(a, b)
@@ -418,7 +337,6 @@ end
 function dependencies_met(path, originals)
 	local deps = get_full_dependencies(path, originals)
 	for _,d in ipairs(deps) do
-		print("Checking dep: " .. d)
 		if(get_node(d, originals.delta)) then return false end
 	end
 	return true
@@ -480,13 +398,13 @@ function build_list(list, delta)
 	-- first process the removes
 	if(delta._items_deleted) then
 		list._items_deleted = delta._items_deleted
-		for _,v in ipairs(delta._items_deleted) do print("LR:"..v) remove_from_list(list, v) end
+		for _,v in ipairs(delta._items_deleted) do remove_from_list(list, v) end
 	end
 
 	-- now add the adds
 	if(delta._items_added) then
 		list._items_added = delta._items_added
-		for _,v in ipairs(delta._items_added) do print("LA:"..v) table.insert(list, v) end
+		for _,v in ipairs(delta._items_added) do table.insert(list, v) end
 	end
 end
 
@@ -653,11 +571,7 @@ function new_do_delta(dp, mp, ap, originals, path, key)
 	end
 
 	-- if we don't have a key then we can simple exit as we are done.
-	-- TODO: this is our exit point so we can be clever in the return codes
-	if(not key) then
-		print("NOY KEY")
-		return work_done
-	end
+	if(not key) then return work_done end
 
 	--
 	-- if we have been added, deleted, or changed then we need to exec
@@ -676,6 +590,7 @@ function new_do_delta(dp, mp, ap, originals, path, key)
 			return false, work_done, false, new_config
 		end
 
+		print("Updating: " .. path)
 		print("PATH: " .. path.. " -- EXEC (key="..key..")")
 		local rc, err = pcall(func, path, key, delta, master, new_config)
 		if(not rc) then
@@ -733,14 +648,12 @@ end
 
 
 --show_config(CONFIG.active, nil, CONFIG.master)
---process_delta(CONFIG.delta, CONFIG.master, CONFIG.active)
 --op = show_config(CONFIG.active, CONFIG.master)
 --print(op)
 
 commit_delta(CONFIG.delta, CONFIG.master, CONFIG.active, CONFIG)
 dump(CONFIG.active)
 
---apply_delta(CONFIG.active, CONFIG.delta, "interface")
 
 --node_walk("", t, delta, delta, t)
 --node_exists("fred/bill/joe", {})
