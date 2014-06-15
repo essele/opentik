@@ -188,14 +188,6 @@ CONFIG.delta = {
 					},
 					_added = 1
 				},
-
-				--
-				-- If we delete a node, then _deleted will be set, we can also add
-				-- a node back, then _added will be set.
-				--
-				-- If we have added or removed fields, then _changed will be set
-				-- along with _fields_added, _fields_changed, _fields_removed
-				--
 				["2"] = {
 					_deleted = 1
 				},
@@ -606,20 +598,16 @@ function new_do_delta(dp, mp, ap, originals, path, key)
 	local master = mp
 	local active = ap
 
-	-- prepare path by adding key (and initing when needed)
-	-- and setup the delta,master and active for when we have a key
+	-- prepare the path and the config tables for when we have a key
 	path = path or ""
 	if(key) then 
 		path = path .. "/" .. key 
 		delta = dp and dp[key]
 		master = mp and (mp[key] or mp["*"])
-		active = ap and ap[key]
 
-		if(not active) then
-			print("Creating: "..key)
-			ap[key] = {}
-			active = ap[key]
-		end
+		-- create the active structure if we need to (will be cleaned later)
+		if(not ap[key]) then ap[key] = {} end
+		active = ap[key]
 	end
 
 	--
@@ -643,7 +631,6 @@ function new_do_delta(dp, mp, ap, originals, path, key)
 		local dc = delta[k]
 		local mc = master[k] or master["*"]
 		if(not mc) then 
-			print("nomc for " .. k)
 			delta[k] = nil
 			goto continue 
 		end
@@ -651,12 +638,12 @@ function new_do_delta(dp, mp, ap, originals, path, key)
 		-- if we have children then we need to recurse further
 		if(has_children(mc)) then
 			local ne, wd, nc = new_do_delta(delta, master, active, originals, path, k)
+			-- if we get a nil return then wd is the error
+			if(ne == nil) then return nil, wd end
+
+			-- otherwise update our status info
 			if(ne) then need_exec = true end
 			if(wd) then work_done = true end
-
-			-- if we had a failure (ne=nil) then we simply return nil to
-			-- cause the recursion to unroll
-			if(ne == nil) then return nil end
 
 			-- do we update the config on failure? probably not since we will just fail all
 			-- the way back
@@ -664,6 +651,14 @@ function new_do_delta(dp, mp, ap, originals, path, key)
 		end
 ::continue::
 	end
+
+	-- if we don't have a key then we can simple exit as we are done.
+	-- TODO: this is our exit point so we can be clever in the return codes
+	if(not key) then
+		print("NOY KEY")
+		return work_done
+	end
+
 	--
 	-- if we have been added, deleted, or changed then we need to exec
 	--
@@ -686,11 +681,11 @@ function new_do_delta(dp, mp, ap, originals, path, key)
 		if(not rc) then
 			print("Call failed.")
 			print("ERR: " .. err)
-			return nil
+			return nil, err
 		end
 
-		-- update the config
-		ap[key] = clean_config(new_config)
+		-- update the config, will be cleaned later...
+		ap[key] = new_config
 
 		-- signal we have done something and clear the delta
 		work_done = true
@@ -698,26 +693,20 @@ function new_do_delta(dp, mp, ap, originals, path, key)
 	end
 
 	--
-	-- If delta doesn't have anything left in it then we need to signal
-	-- the key to be cleared
+	-- tidy up both the delta and the active config, this will
+	-- remove any empty structures
 	--
-	if(key and not has_children(delta)) then 
-		dp[key] = nil
-	end
-	--
-	-- TODO: we might have left-over active structures which we should
-	-- 		 clean here. duplicate of clean_conig really? might be a better
-	-- 		 way to do it here once the function has completed?
-	--
+	if(not has_children(delta)) then dp[key] = nil end
+	ap[key] = ap[key] and clean_config(ap[key])
 
 	return need_exec, work_done, new_config
 end
 
 function commit_delta(delta, master, active, originals)
 	while(1) do
-		local need_exec, work_done = new_do_delta(delta, master, active, originals)
-		if(need_exec == nil) then
-			print("FAILURE")
+		local work_done, err = new_do_delta(delta, master, active, originals)
+		if(work_done == nil) then
+			print("FAILURE: error=" .. err)
 			break;
 		end
 		if(not work_done) then

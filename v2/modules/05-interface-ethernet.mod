@@ -39,6 +39,7 @@ function cf_ethernet(path, key, node, mnode, nc)
 	--
 	if(node._added) then
 		print("NEW INTERFACE CREATED " .. "eth" .. key)
+		error("oh dear")
 		return true
 	end
 
