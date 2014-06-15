@@ -33,7 +33,7 @@ CONFIG = {}
 CONFIG.master = {
 	["dns"] = {
 		_depends = { "interface", "interface/ethernet/0" },
-		_function = "handle_dnsmasq",
+		_function = function() return true end,
 		_partners = { "dhcp" },
 		["resolvers"] = {
 			_type = "list/ipv4",
@@ -42,7 +42,7 @@ CONFIG.master = {
 	},
 	["dhcp"] = {
 		_depends = { "interface/pppoe" },
-		_function = "handle_dnsmasq",
+		_function = function() return true end,
 		_partners = { "dns" }
 	},
 	["tinc"] = {
@@ -183,6 +183,9 @@ CONFIG.delta = {
 				["1"] = {
 					name = "eth1",
 					address = "192.168.1.1/24",
+					comment = { 
+						_items_added = {"two", "line comment" }
+					},
 					_added = 1
 				},
 
@@ -368,6 +371,17 @@ function count_elements(hash)
 	end
 	return rc
 end
+function copy_table(table)
+	local rc = {}
+	for k, v in pairs(table) do
+		if(type(v) == "table") then 
+			rc[k] = copy_table(v)
+		else
+			rc[k] = v
+		end
+	end
+	return rc
+end
 
 --
 -- Get the dependencies for a given path, we look at the master dependencies as
@@ -446,6 +460,128 @@ function list_children(ctable)
 	table.sort(rc)
 	return rc
 end
+function is_in_list(list, item)
+	for _,v in ipairs(list) do
+		if(v == item) then return true end
+	end
+	return false
+end
+function remove_from_list(list, item)
+	local p = 0
+	for i = 1,#list do
+		if(list[i] == item) then
+			p = i
+			break
+		end
+	end
+	if(p) then table.remove(list, p) end
+	return p
+end
+
+
+--
+-- process list directives to give a proper 'after' view of a list
+-- with the delta applies. We provide a list which will contain the
+-- 1,2,3 indexed items and also the _items_added/removed directives
+--
+function build_list(list, delta)
+	-- first process the removes
+	if(delta._items_deleted) then
+		list._items_deleted = delta._items_deleted
+		for _,v in ipairs(delta._items_deleted) do print("LR:"..v) remove_from_list(list, v) end
+	end
+
+	-- now add the adds
+	if(delta._items_added) then
+		list._items_added = delta._items_added
+		for _,v in ipairs(delta._items_added) do print("LA:"..v) table.insert(list, v) end
+	end
+end
+
+
+--
+-- given a delta, master and active we re-create the end state
+-- but only for the current level, we don't do children since
+-- they will be recursed into
+--
+function build_config(delta, master, active)
+	local rc = {}
+	local deleted = delta and delta._deleted
+	--
+	-- if we are not _deleted, then copy any non-tables from the
+	-- active (include lists though)
+	--
+	if(active and not deleted) then
+		for k,v in pairs(active) do
+			local mc = master[k] or master["*"]
+			local mtype = mc and mc._type
+
+			if(type(v)~= "table") then
+				rc[k] = v
+			elseif(k == "comment" or (mtype and string.sub(mtype, 1, 5) == "list/")) then
+				rc[k] = copy_table(v)
+			end
+		end
+	end
+
+	--
+	-- now process the delta, all directives plus any non-tables
+	-- this will catch adds and changes (but not list changes)
+	-- (TODO: include lists)
+	--
+	if(delta) then
+		for k,v in pairs(delta) do
+			local mc = master[k] or master["*"]
+			local mtype = mc and mc._type
+
+			if(string.sub(k, 1, 1) == "_" or type(v) ~= "table") then
+				rc[k] = v
+			elseif(k == "comment" or (mtype and string.sub(mtype, 1, 5) == "list/")) then
+				if(not rc[k]) then rc[k] = {} end
+				build_list(rc[k], v)
+			end
+		end
+	end
+
+	--
+	-- now we process the _fields_deleted directive and remove
+	-- any listed fields that need to be removed
+	--
+	if(rc._fields_deleted) then
+		for k,_ in pairs(rc._fields_deleted) do
+			rc[k] = nil
+		end
+	end	
+	return rc
+end
+
+--
+-- given a config with directives, remove all the directives
+-- and then if there is nothing left return nil. 
+--
+function clean_config(config)
+	for k,v in pairs(config) do
+		if(string.sub(k, 1, 1) == '_') then
+			config[k] = nil
+		elseif(type(v) == "table") then
+			config[k] = clean_config(config[k])
+		end
+	end
+
+	if(next(config)) then return config end
+	return nil
+end
+
+function dump(t, i)
+	i = i or 0
+	for k, v in pairs(t) do
+		print(string.rep(" ", i)..k.."="..tostring(v))
+		if(type(v) == "table") then
+			dump(v, i+4)
+		end
+	end
+end
+
 
 --
 -- Walk the delta tree looking for changes that need to be processed
@@ -454,7 +590,38 @@ end
 -- met. That means that none of the dependencies are still showing
 -- in the delta (i.e. have uncommitted changes)
 --
-function new_do_delta(delta, master, active, originals, path, key)
+-- Arguments:
+--  delta, master, active -- parents probably containing (key)
+--	originals - the global config structure (for deps lookup)
+--	path - the parent path
+--	key - the item we are looking at (within the parent)
+--
+--	if key is not set then we just re-use the delta, master, active
+--	as this will only be the first call and they will then really
+--	be the parents
+--
+function new_do_delta(dp, mp, ap, originals, path, key)
+	-- default to these as ours (for when key not set)
+	local delta = dp
+	local master = mp
+	local active = ap
+
+	-- prepare path by adding key (and initing when needed)
+	-- and setup the delta,master and active for when we have a key
+	path = path or ""
+	if(key) then 
+		path = path .. "/" .. key 
+		delta = dp and dp[key]
+		master = mp and (mp[key] or mp["*"])
+		active = ap and ap[key]
+
+		if(not active) then
+			print("Creating: "..key)
+			ap[key] = {}
+			active = ap[key]
+		end
+	end
+
 	--
 	-- if we have a function and anything has changed then
 	-- we will need to call it (if our dependencies are met)
@@ -462,16 +629,10 @@ function new_do_delta(delta, master, active, originals, path, key)
 	local func = master._function
 	local need_exec = false
 	local work_done = false
-	local clear_node = false
 
-	-- prepare path by adding key (and initing when needed)
-	path = path or ""
-	if(key) then 
-		path = path .. "/" .. key 
-	end
-
-	TODO: make active the parent, make sure we have populated the child
-		  on the way in ... then delete on the way out if empty.
+	-- create a copy of the active config that we will then modify
+	-- using the delta so we have an end state to pass to the func
+	local new_config = build_config(delta, master, active)
 
 	-- look at the items we contain...
 	for _,k in ipairs(list_children(delta)) do
@@ -482,16 +643,24 @@ function new_do_delta(delta, master, active, originals, path, key)
 		local dc = delta[k]
 		local mc = master[k] or master["*"]
 		if(not mc) then 
+			print("nomc for " .. k)
 			delta[k] = nil
 			goto continue 
 		end
 
 		-- if we have children then we need to recurse further
 		if(has_children(mc)) then
-			local ne, wd, cn = new_do_delta(dc, mc, active and active[k], originals, path, k)
+			local ne, wd, nc = new_do_delta(delta, master, active, originals, path, k)
 			if(ne) then need_exec = true end
 			if(wd) then work_done = true end
-			if(cn) then delta[k] = nil end
+
+			-- if we had a failure (ne=nil) then we simply return nil to
+			-- cause the recursion to unroll
+			if(ne == nil) then return nil end
+
+			-- do we update the config on failure? probably not since we will just fail all
+			-- the way back
+			new_config[k] = nc
 		end
 ::continue::
 	end
@@ -509,37 +678,48 @@ function new_do_delta(delta, master, active, originals, path, key)
 		--
 		if(not dependencies_met(path, originals)) then
 			print("PATH: " .. path.. " -- DEPS FAIL")
-			return false, work_done, false
+			return false, work_done, false, new_config
 		end
 
 		print("PATH: " .. path.. " -- EXEC (key="..key..")")
-		local rc, err = pcall(func, path, key, delta, master)
+		local rc, err = pcall(func, path, key, delta, master, new_config)
 		if(not rc) then
 			print("Call failed.")
 			print("ERR: " .. err)
+			return nil
 		end
 
-		-- we need to parent at this point to apply the deltas, at least if its
-		-- a delete?? 
+		-- update the config
+		ap[key] = clean_config(new_config)
 
-		-- TODO: apply the delta changes if we are successful
-		-- TODO: find a way of propogating errors back up (return nil?)
-
+		-- signal we have done something and clear the delta
 		work_done = true
-		clear_node = true
+		dp[key] = nil
 	end
 
 	--
 	-- If delta doesn't have anything left in it then we need to signal
 	-- the key to be cleared
 	--
-	if(not has_children(delta)) then clear_node = true end
-	return need_exec, work_done, clear_node
+	if(key and not has_children(delta)) then 
+		dp[key] = nil
+	end
+	--
+	-- TODO: we might have left-over active structures which we should
+	-- 		 clean here. duplicate of clean_conig really? might be a better
+	-- 		 way to do it here once the function has completed?
+	--
+
+	return need_exec, work_done, new_config
 end
 
 function commit_delta(delta, master, active, originals)
 	while(1) do
 		local need_exec, work_done = new_do_delta(delta, master, active, originals)
+		if(need_exec == nil) then
+			print("FAILURE")
+			break;
+		end
 		if(not work_done) then
 			print("NO WORK DONE")
 			break
@@ -569,6 +749,7 @@ end
 --print(op)
 
 commit_delta(CONFIG.delta, CONFIG.master, CONFIG.active, CONFIG)
+dump(CONFIG.active)
 
 --apply_delta(CONFIG.active, CONFIG.delta, "interface")
 

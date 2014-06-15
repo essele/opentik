@@ -14,13 +14,13 @@ end
 -- primary function for handling basic ethernet configuration
 --
 --
-function cf_ethernet(path, key, node, mnode)
+function cf_ethernet(path, key, node, mnode, nc)
 	print("This is the cf_ethernet function")
 
 	print("PATH="..tostring(path))
 
 
-	for k,v in pairs(node) do
+	for k,v in pairs(nc) do
 		print("  k="..k.." v="..tostring(v))
 	end
 
