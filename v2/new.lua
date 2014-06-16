@@ -340,15 +340,23 @@ function show_fields(delta, master, indent)
 	for _, k in ipairs(fields) do
 		if(delta[k]) then
 			local operation = " "
-			if(delta._added) then operation = "+"
-			elseif(delta._fields_added and delta._fields_added[k]) then operation = "+"
-			elseif(delta._fields_deleted and delta._fields_deleted[k]) then operation = "-"
-			elseif(delta._fields_changed and delta._fields_changed[k]) then operation = "|" end
+			local value = delta[k]
+
+			if(delta._added) then 
+				operation = "+"
+			elseif(delta._fields_added and delta._fields_added[k]) then 
+				operation = "+"
+			elseif(delta._fields_deleted and delta._fields_deleted[k]) then 
+				operation = "-"
+				value = delta._fields_deleted[k]
+			elseif(delta._fields_changed and delta._fields_changed[k]) then 
+				operation = "|" 
+			end
 
 			if(type(delta[k]) == "table") then
 				show_list(k, delta[k], indent)
 			else
-				print(operation .. " " .. string.rep(" ", indent) .. k .. "=" .. tostring(delta[k]))
+				print(operation .. " " .. string.rep(" ", indent) .. k .. "=" .. tostring(value))
 			end
 		end
 ::continue::
@@ -465,6 +473,10 @@ function apply_delta(delta, active, master, originals, completed, ppath)
 	return did_work
 end
 
+--
+-- Keep running through the apply_delta function until we don't
+-- do any work, then we should be finished.
+--
 function commit_delta(delta, active, master, originals)
 	local completed = {}
 	while(1) do
@@ -479,14 +491,165 @@ function commit_delta(delta, active, master, originals)
 			break
 		end
 		for k,v in pairs(delta) do
+			-- TODO: check for changes
 			print("Srill left: " .. k)
 		end
 	end
 end
 
+--
+-- for a given node, return the master and delta nodes (if they exist)
+--
+function get_node(path, m, d)
+    for key in string.gmatch(path, "([^/]+)") do
+        m = m and (m[key] or m["*"])
+        d = d and d[key]
+    end
+    return m, d
+end
+
+--
+-- Set <node> field=value field=value ...
+-- delete <node> [field] [field]
+--
+function alter_config(delta, master, path, operation, fields)
+
+	-- check the node is valid
+	local mc, dc = get_node(path, master, delta)
+	if(not mc) then
+		print("invalid path: " .. path)
+		return false
+	end
+
+	-- if operation is del and no fields are supplied then
+	-- we simply need to recurse and delete everything
+	if(operation == "del" and not fields) then
+		print("Would delete this whole node")
+		return true
+	end
+
+	-- check all the supplied fields are valid
+	for k, v in pairs(fields) do
+		if(not mc[k]) then
+			print("invalid field: " .. k)
+			return false
+		end
+		-- todo: validate if not del
+	end
+
+	-- if we are deleting fields, check if at least one is there
+	-- otherwise we can just exit
+	-- TODO
+
+
+	-- we know it's going to work, so we can build the structure
+	-- if needed
+	mc = master
+	dc = delta
+    for key in string.gmatch(path, "([^/]+)") do
+        mc = mc[key] or mc["*"]
+		if(not dc[key]) then
+			dc[key] = { _added = 1 }
+		elseif(dc[key]._deleted) then
+			dc[key]._deleted = nil
+			dc[key]._added = 1
+		else
+			dc[key]._changed = 1
+		end
+		dc = dc[key]
+    end
+
+	-- make sure we have the structures we need
+	if(not dc._fields_deleted) then dc._fields_deleted = {} end
+	if(not dc._fields_added) then dc._fields_added = {} end
+	if(not dc._fields_changed) then dc._fields_changed = {} end
+	
+	-- now we can set the actual fields
+	for k,v in pairs(fields) do
+		local is_added = dc._fields_added[k]
+		local deleted_val = dc._fields_deleted[k]
+		local changed_val = dc._fields_changed[k]
+
+		-- if we are deleting a field if it's marked as added
+		-- then we don't need to show the deleted version
+		-- if it's already deleted then we don't update
+		if(v == false) then
+			if(not is_added and not deleted_val) then
+				dc._fields_deleted[k] = dc[k]
+			end
+			dc._fields_changed[k] = nil
+			dc._fields_added[k] = nil
+			v= nil
+			goto set
+		end
+
+		-- if we're setting to the same value, then we don't really
+		-- want to do anything
+		if(dc[k] == v) then goto set end
+
+		-- if we are putting the original, deleted, or changed value back
+		-- then we need to remove the changed/deleted status since we
+		-- are back to previous
+		if(deleted_val == v or changed_val == v) then
+			dc._fields_deleted[k] = nil
+			dc._fields_changed[k] = nil
+			dc._fields_added[k] = nil
+			goto set
+		end
+
+		-- if we were deleted, but now we are setting a different value
+		-- then we need to move to changed
+		if(deleted_val) then
+			dc._fields_changed[k] = deleted_val
+			dc._fields_deleted[k] = nil
+			goto set
+		end
+
+
+		-- if the field is already set, then this is either a change or
+		-- and overwrite of an existing change or add
+		if(dc[k]) then
+			if(not changed_val and not is_added) then
+				dc._fields_changed[k] = dc[k]
+			end
+			goto set
+		end
+
+		--  if it's not set then this is a simple add ... fall through
+		dc._fields_added[k] = 1
+::set::	
+		-- actually set the value	
+		dc[k] = v
+	end
+end
+
+CONFIG.delta = {
+	interface = {
+		ethernet = {
+			["0"] = { 
+				speed = 40
+			}
+		}
+	}
+}
+alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", "add",
+			{ address="1.2.3.4/8", speed=40 } )
+dump(CONFIG.delta)
+show_config(CONFIG.delta, CONFIG.master)
+print("--------------")
+alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", "add",
+			{ address="1.6.6.4/8", speed=88 } )
+dump(CONFIG.delta)
+print("--------------")
+alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", "add",
+			{ address=false, speed=40 } )
+
+
+dump(CONFIG.delta)
+
 --show_config(CONFIG.delta, CONFIG.active, CONFIG.master)
-commit_delta(CONFIG.delta, CONFIG.active, CONFIG.master, CONFIG)
-dump(CONFIG.active)
+--commit_delta(CONFIG.delta, CONFIG.active, CONFIG.master, CONFIG)
+--dump(CONFIG.active)
 
 --[[
 dump(CONFIG.delta)
