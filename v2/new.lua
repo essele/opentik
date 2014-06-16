@@ -32,7 +32,7 @@ require("lfs")
 CONFIG = {}
 CONFIG.master = {
 	["dns"] = {
-		_depends = { "interface", "interface/ethernet/0" },
+		_depends = { "/interface", "/interface/ethernet/0" },
 		_function = function() return true end,
 		_partners = { "dhcp" },
 		["resolvers"] = {
@@ -158,6 +158,8 @@ CONFIG.delta.fred.one = {}
 CONFIG.delta.fred.one._added = 1
 CONFIG.delta.fred.one.value = "blah"
 
+CONFIG.delta.interface._changed = 1
+CONFIG.delta.interface.ethernet._changed = 1
 CONFIG.delta.interface.ethernet["0"]._changed = 1
 CONFIG.delta.interface.ethernet["0"]._fields_added = { ["mtu"] = 1, ["duplex"] = 1, ["speed"] = 1 }
 CONFIG.delta.interface.ethernet["0"]._fields_deleted = { ["grog"] = 1 }
@@ -240,11 +242,24 @@ function list_all_fields(master)
 end
 
 --
--- Return the list of our children in the defined order or alphabetically.
--- We also add comment on the front if it's not included.
+-- list any non directive children, sorted alphabetically
+--
+function children_alphabetically(delta)
+	local rc = {}
+	for k,_ in pairs(delta) do 
+		if(string.sub(k, 1, 1) ~= "_") then table.insert(rc, k) end
+	end
+	table.sort(rc)
+	return rc
+end
+
+--
+-- pull out any children from the delta that are a wildcard match, we will
+-- use this in list_children to cover the ["*"] entry in _order
 --
 function list_all_wildcards(delta, master)
 	local rc = {}
+	if(not master["*"]) then return rc end
 	for k,_ in pairs(delta) do
 		if(not master[k]) then table.insert(rc, k) end
 	end
@@ -252,10 +267,40 @@ function list_all_wildcards(delta, master)
 	return rc
 end
 
-function list_all_children(delta, master)
+--
+-- Return the list of our children in the defined order or alphabetically.
+-- We also add comment on the front if it's not included.
+--
+function list_children(delta, master)
+	local kids = children_alphabetically(delta)
+	local order = master._order or {}
 	local rc = {}
+
+	-- put comment at the front if we have one
+	if(is_in_list(kids, "comment")) then
+		table.insert(rc, "comment")
+		remove_from_list(kids, "comment")
+	end
+
+	-- start with the ones from order, cater for "*"
+	for _,k in ipairs(order) do
+		if(is_in_list(kids, k)) then
+			table.insert(rc, k)
+			remove_from_list(kids, k)
+		elseif(k == "*") then
+			append_list(rc, list_all_wildcards(delta, master))
+		end
+	end
+
+	-- now anything left over...
+	append_list(rc, kids)
+	return rc
 end
 
+--
+-- Use the information in the list structure to show the original list with
+-- adds and deletes highlighted.
+--
 function show_list(item, list, indent)
 	local base = (list._added and {}) or list._original_list or list
 	local dels = (list._items_deleted and copy_table(list._items_deleted)) or {}
@@ -310,12 +355,15 @@ function show_fields(delta, master, indent)
 	end
 end
 
+--
+-- Recursive function to show a delta config. We highlight anything that needs to
+-- be added or removed (including changes to lists)
+--
 function show_config(delta, master, indent, parent)
 	indent = indent or 0
 
-	for k, v in pairs(delta) do
-		if(string.sub(k, 1, 1) == "_") then goto continue end
-
+	for _, k in ipairs(list_children(delta, master)) do
+		local dc = delta[k]
 		local mc = master[k] or master["*"]
 		if(not mc) then 
 			print("WARNING: no master definition for: "..k)
@@ -324,21 +372,21 @@ function show_config(delta, master, indent, parent)
 
 		-- work out how we need to be shown
 		local operation = " "
-		if(v._added) then operation = "+"
-		elseif(v._deleted) then operation = "-"
-		elseif(v._changed) then operation = "|" end
+		if(dc._added) then operation = "+"
+		elseif(dc._deleted) then operation = "-"
+		elseif(dc._changed) then operation = "|" end
 
 		local label = (parent and (parent.." "..k)) or k
 
 		-- show the header (but only if we don't have wildcard children
 		if(mc["*"]) then
-			show_config(delta[k], mc, indent, k)
+			show_config(dc, mc, indent, k)
 		else
 			print(operation .. " " .. string.rep(" ", indent) .. label .. " {")
-			if(has_children(delta[k])) then
-				show_config(delta[k], mc, indent+4, child_label)
+			if(has_children(dc)) then
+				show_config(dc, mc, indent+4, child_label)
 			else
-				show_fields(delta[k], mc, indent+4)
+				show_fields(dc, mc, indent+4)
 			end
 			print(operation .. " " .. string.rep(" ", indent) .. "}")
 		end
@@ -346,7 +394,104 @@ function show_config(delta, master, indent, parent)
 	end
 end
 
+--
+-- Cleaning a config is simply removing any of the directives in a recursive 
+-- fashion. If we end up removing everything then we return nil so the result
+-- should be applied to the table (i.e. fred = clean_config(fred))
+--
+function clean_config(delta)
+	for k,v in pairs(delta) do
+		if(string.sub(k, 1, 1) == "_") then delta[k] = nil
+		elseif(type(v) == "table") then delta[k] = clean_config(delta[k]) end
+	end
+	if(not next(delta)) then return nil end
+	return delta
+end
 
+--
+-- Applying a delta is walking through the delta tree (ignoring any children
+-- that have not changed), and then executing any functions that we find
+--
+-- Before executing the function we need to make sure any dependencies are
+-- met
+--
+function apply_delta(delta, active, master, originals, completed, ppath)
+	-- setup some default for our internal vars
+	ppath = ppath or ""
 
-show_config(CONFIG.delta, CONFIG.master)
+	-- flag to show whether we actualy did anything or not
+	local did_work = false
+
+	for _, k in ipairs(list_children(delta, master)) do
+		local path = ppath .. "/" .. k
+		local dc = delta[k]
+		local mc = master[k] or master["*"]
+		if(not mc) then 
+			print("WARNING: no master definition for: "..k)
+			goto continue
+		end
+		if(not active[k]) then active[k] = {} end
+		local ac = active[k]
+
+		-- we only care about stuff that has changed in some way
+		if(dc._added or dc._deleted or dc._changed) then
+			-- TODO: check dependencies are met
+			if(mc._depends) then
+				for _,d in ipairs(mc._depends) do
+					if(not completed[d]) then
+						print("Dependency not complete: " .. d)
+						goto continue
+					end
+				end
+			end
+			
+			if(mc._function) then
+				print("Would execute")
+				did_work = true
+				-- TODO: return nil,err on failure
+			elseif(has_children(dc)) then
+				local dw, err = apply_delta(dc, ac, mc, originals, completed, path)
+				if(dw == nil) then return nil, err end
+				if(dw) then did_work = true end
+			end
+			-- move the config across, and clean
+			delta[k] = clean_config(delta[k])
+			active[k] = delta[k]
+		end
+		completed[path] = 1
+		print("Done: " .. path)
+::continue::
+	end
+	return did_work
+end
+
+function commit_delta(delta, active, master, originals)
+	local completed = {}
+	while(1) do
+		print("RUN")
+		local dw, err = apply_delta(delta, active, master, originals, completed)
+		if(dw == nil) then
+			print("ERROR: " .. err)
+			break
+		end
+		if(not dw) then
+			print("NO WORK")
+			break
+		end
+		for k,v in pairs(delta) do
+			print("Srill left: " .. k)
+		end
+	end
+end
+
+--show_config(CONFIG.delta, CONFIG.active, CONFIG.master)
+commit_delta(CONFIG.delta, CONFIG.active, CONFIG.master, CONFIG)
+dump(CONFIG.active)
+
+--[[
+dump(CONFIG.delta)
+print("---------------------------")
+CONFIG.delta = clean_config(CONFIG.delta)
+dump(CONFIG.delta)
+]]--
 
