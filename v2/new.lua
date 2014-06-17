@@ -220,6 +220,27 @@ end
 function append_list(orig, extra)
 	for _, v in ipairs(extra) do table.insert(orig, v) end
 end
+function same_list(a, b)
+	if(#a ~= #b) then return false end
+	for i=1,#a do
+		if(a[i] ~= b[i]) then return false end
+	end
+	return true
+end
+
+--
+-- an iterator to return non-directive fields
+--
+function non_directive_fields(t)
+	local last = nil
+	return function()
+		while(1) do
+			last = next(t, last)
+			if(not last) then return nil end
+			if(string.sub(last, 1, 1) ~= "_") then return last end
+		end
+	end
+end
 
 --
 -- Return all the fields from the master definition in the supplied order
@@ -230,9 +251,7 @@ function list_all_fields(master)
 	if(master._order) then 
 		rc = master._order 
 	else
-		for k, v in pairs(master) do
-			if(string.sub(k, 1, 1) ~= "_") then table.insert(rc, k) end
-		end
+		for k in non_directive_fields(master) do table.insert(rc, k) end
 		table.sort(rc)
 	end
 	if(not is_in_list(rc, "comment")) then
@@ -246,9 +265,7 @@ end
 --
 function children_alphabetically(delta)
 	local rc = {}
-	for k,_ in pairs(delta) do 
-		if(string.sub(k, 1, 1) ~= "_") then table.insert(rc, k) end
-	end
+	for k in non_directive_fields(delta) do table.insert(rc, k) end
 	table.sort(rc)
 	return rc
 end
@@ -326,14 +343,12 @@ function node_disposition(delta)
 
 	-- if we think we might be added or deleted then check each field
 	if(is_added or is_deleted) then
-		for k,v in pairs(delta) do
-			if(string.sub(k, 1, 1) ~= "_") then
-				is_deleted = false
-				if(is_added) then
-					if(not delta._fields_added[k]) then
-						is_added = false
-						break
-					end
+		for k in non_directive_fields(delta) do
+			is_deleted = false
+			if(is_added) then
+				if(not delta._fields_added[k]) then
+					is_added = false
+					break
 				end
 			end
 		end
@@ -545,22 +560,9 @@ function get_node(path, m, d)
 end
 
 --
--- an iterator to return non-directive fields
---
-function non_directive_fields(t)
-	local last = nil
-	return function()
-		while(1) do
-			last = next(t, last)
-			if(not last) then return nil end
-			if(string.sub(last, 1, 1) ~= "_") then return last end
-		end
-	end
-end
-
---
--- an iterator function that goes through our list of key=value
--- fields so we return either key,value or field,nil
+-- an iterator function that goes through our list of key=value fields
+-- fields so we return either key,value or field,nil with + or - for list
+-- operations
 --
 function field_values(t)
 	local i = 0
@@ -681,16 +683,22 @@ function alter_config(delta, master, path, fields)
 		-- if we only contain no change then we must be no change
 		-- otherwise we are change
 		for k in non_directive_fields(dc) do
-			if(dc[k]._added) then dc._deleted = nil dc._changed = 1 end
-			if(dc[k]._deleted) then dc._added = nil dc._changed = 1 end
-			if(dc[k]._changed) then dc._deleted = nil dc._added = nil dc._changed = 1 end
+			if(dc[k]._added) then dc._deleted = nil dc._changed = 1
+			elseif(dc[k]._deleted) then dc._added = nil dc._changed = 1 
+			elseif(dc[k]._changed) then dc._deleted = nil dc._added = nil dc._changed = 1
+			else dc._added = nil dc._deleted = nil end
 		end
 		if(dc._added or dc._deleted) then dc._changed = nil end
 	end
 end	
 
 function alter_list(dc, k, value, list_op)
-	print("LISTOP: ["..tostring(list_op).."]")
+	-- if we are deleting the last item in the list then we need to switch
+	-- to a full delete, since it's the same as the whole list going
+	if(list_op == "-" and dc[k][1] == value and not dc[k][2]) then
+		value = nil
+	end
+
 	-- no value means delete the whole list, so this is a revert to original
 	-- and then standard treatment for a deleted item
 	if(not value) then
@@ -706,16 +714,12 @@ function alter_list(dc, k, value, list_op)
 		return
 	end
 
-	-- if we are deleting (k-=v) then we should find the key ends with a minus
-	if(string.match(k, "%-$")) then
-		k = string.sub(k, 1, #k-1)
-		print("Remove value, k="..k.." v="..tostring(value))
-		return
-	end
+	-- if we are trying to delete an item that isn't in the list then we do nothing
+	if(list_op == "-" and not is_in_list(dc[k], value)) then return end
 
-	-- if we are adding something, but we were shown as deleted then we need
-	-- to undelete our field, and then mark each item as deleted. If we weren't
-	-- present before, then it's a pure add
+	-- if we are adding or removing something, but we were shown as deleted then 
+	-- we need to undelete our field, and then mark each item as deleted. If we 
+	-- weren't present before, then it's a pure add (del is not valid)
 	if(dc._fields_deleted[k]) then
 		local original = dc._fields_deleted[k]
 		dc._fields_deleted[k] = nil
@@ -725,15 +729,30 @@ function alter_list(dc, k, value, list_op)
 	elseif(not dc[k]) then
 		dc[k] = {}
 		dc[k]._original_list = {}
-		dc[k]._items_added = { v }
+		dc[k]._items_added = {}
 	end
 
-	-- if we set a value then it will be a simple add to the list and 
-	-- the items_added list
 	if(not dc[k]._original_list) then dc[k]._original_list = copy_table(dc[k]) end
-	if(not dc[k]._items_added) then dc[k]._items_added = {} end
-	table.insert(dc[k]._items_added, value)
-	table.insert(dc[k], value)
+
+	if(not list_op or list_op == "+") then
+		if(not dc[k]._items_added) then dc[k]._items_added = {} end
+		table.insert(dc[k]._items_added, value)
+		table.insert(dc[k], value)
+	elseif(list_op == "-") then
+		if(is_in_list(dc[k], value)) then
+			if(not dc[k]._items_deleted) then dc[k]._items_deleted = {} end
+			table.insert(dc[k]._items_deleted, value)
+			remove_from_list(dc[k], value)
+		end
+	end
+
+	-- if for some bizarre reason our list is the same as our original list
+	-- then we are back to normal and we should reflect that
+	if(same_list(dc[k], dc[k]._original_list)) then
+		dc[k] = dc[k]._original_list
+		dc._fields_changed[k] = nil
+		return
+	end
 
 	-- if the original list is empty, then we must be an add, otherwise
 	-- we are a change
@@ -828,13 +847,11 @@ function alter_node(dc, mc, fields)
 		local is_added = (dc._fields_added and true) or false
 		local is_deleted = (dc._fields_deleted and true) or false
 		if(is_added or is_deleted) then
-			for k, v in pairs(dc) do
-				if(string.sub(k, 1, 1) ~= "_") then
-					is_deleted = false
-					if(not dc._fields_added or not dc._fields_added[k]) then
-						is_added = false
-						break
-					end
+			for k in non_directive_fields(dc) do
+				is_deleted = false
+				if(not dc._fields_added or not dc._fields_added[k]) then
+					is_added = false
+					break
 				end
 			end
 		end
@@ -850,13 +867,16 @@ CONFIG.delta = {
 			["0"] = { 
 				address = "1.2.3.3/1",
 				speed = 40,
-				secondaries = { "1.1.1.1/16", "2.2.2.2/8", "3.3.3.3/24" }
+--				secondaries = { "1.1.1.1/16", "2.2.2.2/8", "3.3.3.3/24" }
+				secondaries = { "3.3.3.3/1", "2.2.2.2/8" }
 			}
 		}
 	}
 }
 --alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "secondaries"})
 alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "secondaries-=2.2.2.2/8"})
+dump(CONFIG.delta)
+alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "secondaries+=2.2.2.2/8"})
 --alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/2", { "address=1.2.3.3/1", "speed=40", "duplex=auto" })
 --dump(CONFIG.delta)
 --show_config(CONFIG.delta, CONFIG.master)
