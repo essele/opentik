@@ -349,13 +349,13 @@ end
 -- Use the information in the list structure to show the original list with
 -- adds and deletes highlighted.
 --
-function show_list(item, list, indent)
+function show_list(parent_op, item, list, indent)
 	local base = (list._added and {}) or list._original_list or list
 	local dels = (list._items_deleted and copy_table(list._items_deleted)) or {}
 	local adds = (list._added and list) or list._items_added or {}
 
 	for _, k in ipairs(base) do
-		local operation = " "
+		local operation = (parent_op == "-" and "-") or " "
 		if(is_in_list(dels, k)) then
 			operation = "-"
 			remove_from_list(dels, k)
@@ -371,21 +371,7 @@ function show_fields(delta, master, indent)
 	local fields = list_all_fields(master)
 	
 	--
-	-- if we are fully deleted then we show the deleted fields
-	-- all first
-	--
---[[
-	if(delta._deleted) then
-		for _, k in ipairs(fields) do
-			if(delta._deleted[k]) then
-				print("- " .. string.rep(" ", indent) .. k .. "=" .. tostring(delta._deleted[k]))
-			end
-		end
-	end
-]]--
-
-	--
-	-- now show the less dramatic adds, deletes and changes
+	-- show the adds, deletes and changes
 	--
 	for _, k in ipairs(fields) do
 		value = delta[k] or (delta._fields_deleted and delta._fields_deleted[k])
@@ -402,8 +388,8 @@ function show_fields(delta, master, indent)
 				operation = "|" 
 			end
 
-			if(type(delta[k]) == "table") then
-				show_list(k, delta[k], indent)
+			if(type(value) == "table") then
+				show_list(operation, k, value, indent)
 			else
 				print(operation .. " " .. string.rep(" ", indent) .. k .. "=" .. tostring(value))
 			end
@@ -582,14 +568,14 @@ function field_values(t)
 	return function()
 		i = i + 1
 		if(t[i]) then
-			print("i="..i.." t[i]="..tostring(t[i]))
-			local k, v = string.match(t[i], "^([^=]+)=(.*)$")
+			local k, op, v = string.match(t[i], "^(%a[^=]-)([+-]?)=(.*)$")
+			if(#op == 0) then op = nil end
 			if(k) then 
 				-- convert to a number if it makes sense
 				if(string.match(v, "^%-?%d+$") or string.match(v, "^%-?%d*%.%d+$")) then
 					v = v + 0
 				end
-				return k, v 
+				return k, v, op
 			end
 		end
 		return t[i]
@@ -610,7 +596,6 @@ function delete_config(delta, master)
 	else
 		if(not delta._fields_deleted) then delta._fields_deleted = {} end
 		for k in non_directive_fields(delta) do
-			print("Woudl delete: " .. k)
 			if(delta._fields_added and delta._fields_added[k]) then
 				-- do nothing
 			elseif(delta._fields_updated and delta._fields_updated[k]) then
@@ -642,8 +627,7 @@ function alter_config(delta, master, path, fields)
 	-- if we are a delete operation then we need to recurse
 	-- into all children and mark them, and then clear out the fields
 	if(not fields) then
-		print("Would delete this whole node")
-		delete_config(delta, master)
+		delete_config(dc, mc)
 		goto cleanup
 	end
 
@@ -653,10 +637,16 @@ function alter_config(delta, master, path, fields)
 		return false
 	end
 
-	-- check all the supplied fields are valid
-	for k, v in field_values(fields) do
+	-- check all the supplied fields are valid, remove the leading minus
+	-- if we are a list op
+	--
+	for k, v, op in field_values(fields) do
 		if(not mc[k]) then
 			print("invalid field: " .. k)
+			return false
+		end
+		if(op and string.sub(mc[k]._type, 1, 5) ~= "list/") then
+			print("list operation on non-list: " .. k)
 			return false
 		end
 		-- todo: validate if not del
@@ -699,6 +689,60 @@ function alter_config(delta, master, path, fields)
 	end
 end	
 
+function alter_list(dc, k, value, list_op)
+	print("LISTOP: ["..tostring(list_op).."]")
+	-- no value means delete the whole list, so this is a revert to original
+	-- and then standard treatment for a deleted item
+	if(not value) then
+		if(not dc._fields_added[k] and not dc._fields_deleted[k]) then
+			if(dc[k]._original_list) then dc[k] = dc[k]._original_list end
+			dc[k]._items_added = nil
+			dc[k]._items_deleted = nil
+			dc._fields_deleted[k] = dc[k]
+		end
+		dc._fields_changed[k] = nil
+		dc._fields_added[k] = nil
+		dc[k] = nil
+		return
+	end
+
+	-- if we are deleting (k-=v) then we should find the key ends with a minus
+	if(string.match(k, "%-$")) then
+		k = string.sub(k, 1, #k-1)
+		print("Remove value, k="..k.." v="..tostring(value))
+		return
+	end
+
+	-- if we are adding something, but we were shown as deleted then we need
+	-- to undelete our field, and then mark each item as deleted. If we weren't
+	-- present before, then it's a pure add
+	if(dc._fields_deleted[k]) then
+		local original = dc._fields_deleted[k]
+		dc._fields_deleted[k] = nil
+		dc[k] = copy_table(original)
+		dc[k]._original_list = copy_table(original)
+		dc[k]._items_deleted = copy_table(original)
+	elseif(not dc[k]) then
+		dc[k] = {}
+		dc[k]._original_list = {}
+		dc[k]._items_added = { v }
+	end
+
+	-- if we set a value then it will be a simple add to the list and 
+	-- the items_added list
+	if(not dc[k]._original_list) then dc[k]._original_list = copy_table(dc[k]) end
+	if(not dc[k]._items_added) then dc[k]._items_added = {} end
+	table.insert(dc[k]._items_added, value)
+	table.insert(dc[k], value)
+
+	-- if the original list is empty, then we must be an add, otherwise
+	-- we are a change
+	if(not next(dc[k]._original_list)) then 
+		dc._fields_added[k] = 1 
+	else
+		dc._fields_changed[k] = 1 
+	end
+end
 
 function alter_node(dc, mc, fields)
 	-- make sure we have the structures we need in this node
@@ -707,18 +751,23 @@ function alter_node(dc, mc, fields)
 	if(not dc._fields_changed) then dc._fields_changed = {} end
 	
 	-- now we can set the actual fields
-	for k,v in field_values(fields) do
+	for k,v, list_op in field_values(fields) do
 		local is_added = dc._fields_added[k]
 		local deleted_val = dc._fields_deleted[k]
 		local changed_val = dc._fields_changed[k]
 
 		-- if we're setting to the same value, then we don't really
 		-- want to do anything
-		if(dc[k] == v) then goto set end
+		if(dc[k] == v) then goto continue end
 
 		-- handle field deletion ... it is hasn't been added, and wasn't deleted
 		-- before then mark it as deleted.
 		-- otherwise we can jut clear up the adds/changes references
+		if(string.sub(mc[k]._type, 1, 5) == "list/") then
+			alter_list(dc, k, v, list_op)
+			goto continue
+		end
+	
 		if(v == nil) then
 			if(not is_added and not deleted_val) then
 				dc._fields_deleted[k] = dc[k]
@@ -731,6 +780,7 @@ function alter_node(dc, mc, fields)
 		-- if we are putting the original, deleted, or changed value back
 		-- then we need to remove the changed/deleted status since we
 		-- are back to previous
+		-- (note that this won't work for a list)
 		if(deleted_val == v or changed_val == v) then
 			dc._fields_deleted[k] = nil
 			dc._fields_changed[k] = nil
@@ -760,6 +810,7 @@ function alter_node(dc, mc, fields)
 ::set::	
 		-- actually set the value	
 		dc[k] = v
+::continue::
 	end
 
 	-- tidy up the directives...
@@ -780,7 +831,7 @@ function alter_node(dc, mc, fields)
 			for k, v in pairs(dc) do
 				if(string.sub(k, 1, 1) ~= "_") then
 					is_deleted = false
-					if(not dc._fields_added[k]) then
+					if(not dc._fields_added or not dc._fields_added[k]) then
 						is_added = false
 						break
 					end
@@ -798,28 +849,29 @@ CONFIG.delta = {
 		ethernet = {
 			["0"] = { 
 				address = "1.2.3.3/1",
-				speed = 40
+				speed = 40,
+				secondaries = { "1.1.1.1/16", "2.2.2.2/8", "3.3.3.3/24" }
 			}
 		}
 	}
 }
-alter_config(CONFIG.delta, CONFIG.master, "/interface", nil)
+--alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "secondaries"})
+alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "secondaries-=2.2.2.2/8"})
+--alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/2", { "address=1.2.3.3/1", "speed=40", "duplex=auto" })
 --dump(CONFIG.delta)
 --show_config(CONFIG.delta, CONFIG.master)
 print("--------------")
-alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "address=1.2.3.3/1", "speed=40", "duplex=auto" })
+--alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "address=1.2.3.3/1", "speed=40", "duplex=auto" })
 dump(CONFIG.delta)
 show_config(CONFIG.delta, CONFIG.master)
 print("--------------")
 --alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0",
 --			{ address="1.6.6.4/8", speed=88 } )
-dump(CONFIG.delta)
+--dump(CONFIG.delta)
 print("--------------")
 --alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0",
 --			{ address=false, speed=40 } )
 
-
-dump(CONFIG.delta)
 
 --show_config(CONFIG.delta, CONFIG.active, CONFIG.master)
 --commit_delta(CONFIG.delta, CONFIG.active, CONFIG.master, CONFIG)
