@@ -374,6 +374,7 @@ function show_fields(delta, master, indent)
 	-- if we are fully deleted then we show the deleted fields
 	-- all first
 	--
+--[[
 	if(delta._deleted) then
 		for _, k in ipairs(fields) do
 			if(delta._deleted[k]) then
@@ -381,6 +382,7 @@ function show_fields(delta, master, indent)
 			end
 		end
 	end
+]]--
 
 	--
 	-- now show the less dramatic adds, deletes and changes
@@ -557,6 +559,20 @@ function get_node(path, m, d)
 end
 
 --
+-- an iterator to return non-directive fields
+--
+function non_directive_fields(t)
+	local last = nil
+	return function()
+		while(1) do
+			last = next(t, last)
+			if(not last) then return nil end
+			if(string.sub(last, 1, 1) ~= "_") then return last end
+		end
+	end
+end
+
+--
 -- an iterator function that goes through our list of key=value
 -- fields so we return either key,value or field,nil
 --
@@ -581,6 +597,36 @@ function field_values(t)
 end
 
 --
+-- recursively delete (mark) the config from the given
+-- node
+--
+function delete_config(delta, master)
+	if(has_children(delta)) then
+		for _,k in ipairs(list_children(delta, master)) do
+			delete_config(delta[k], master[k])
+		end
+		delta._changed = nil
+		delta._added = nil
+	else
+		if(not delta._fields_deleted) then delta._fields_deleted = {} end
+		for k in non_directive_fields(delta) do
+			print("Woudl delete: " .. k)
+			if(delta._fields_added and delta._fields_added[k]) then
+				-- do nothing
+			elseif(delta._fields_updated and delta._fields_updated[k]) then
+				delta._fields_deleted[k] = delta._fields_updated[k]
+			else
+				delta._fields_deleted[k] = delta[k]
+			end
+			delta[k] = nil
+		end
+		delta._fields_updated = nil
+		delta._fields_added = nil
+	end
+	delta._deleted = 1
+end
+
+--
 -- Set <node> field=value field=value ...
 -- delete <node> [field] [field]
 --
@@ -593,39 +639,19 @@ function alter_config(delta, master, path, fields)
 		return false
 	end
 
-	-- if operation is del and no fields are supplied then
-	-- we need to recurse and mark everything as deleted but we also
-	-- need to clean the config since any other directives become
-	-- invalid
+	-- if we are a delete operation then we need to recurse
+	-- into all children and mark them, and then clear out the fields
 	if(not fields) then
-		if(has_children(dc)) then
-			-- if we have children we recurse
-			for _,k in ipairs(list_children(dc, mc)) do
-				print("woudl recurse for : " .. k)
-				alter_config(delta, master, path .. "/" .. k, nil)
-			end
-			dc._deleted = 1
-		else
-			-- otherwise we move our fields
-			print("would delete fields")
-			if(not dc._fields_deleted) then dc._fields_deleted = {} end
-			for _, k in ipairs(list_all_fields(mc)) do
-				if(not dc._fields_added or not dc._fields_added[k]) then
-					if(dc[k]) then
-						dc._fields_deleted[k] = dc[k]
-					end
-				end
-				dc[k] = nil
-			end
-			dc._fields_added = nil
-			dc._fields_updated = nil
-		end
 		print("Would delete this whole node")
--- TODO: process parent nodes to set disposition
-		return true
+		delete_config(delta, master)
+		goto cleanup
 	end
 
-	-- todo, exit here if we are a container
+	-- we shouldn't really get here if we are a container
+	if(not has_children(mc)) then
+		print("AAARGGGHHHH!!!!")
+		return false
+	end
 
 	-- check all the supplied fields are valid
 	for k, v in field_values(fields) do
@@ -637,28 +663,44 @@ function alter_config(delta, master, path, fields)
 	end
 
 	-- we know it's going to work, so we can build the structure
-	-- if needed
+	-- we need to contain the node
 	mc = master
 	dc = delta
     for key in string.gmatch(path, "([^/]+)") do
         mc = mc[key] or mc["*"]
-		if(not dc[key]) then
-			dc[key] = { _added = 1 }
-		elseif(dc[key]._deleted) then
-			dc[key]._deleted = nil
-		else
-			dc[key]._changed = 1
-		end
+		if(not dc[key]) then dc[key] = {} end
 		dc = dc[key]
     end
 
-	-- since we know that we are now the container we can
-	-- remove the added, changed, deleted flags
-	dc._added = nil
-	dc._deleted = nil
-	dc._changed = nil
-	
+	-- now we can make the actual change to the node
+	alter_node(dc, mc, fields)
 
+::cleanup::
+	-- check all the parent nodes and mark them as appropriate
+	while(#path > 0) do
+		path = string.gsub(path, "/[^/]+$", "")
+		mc, dc = get_node(path, master, delta)
+
+		-- prepare
+		dc._changed = nil
+		dc._added = 1 
+		dc._deleted = 1
+		
+		-- if we only contain adds then we must be add
+		-- if we only contain dels then we must be del
+		-- if we only contain no change then we must be no change
+		-- otherwise we are change
+		for k in non_directive_fields(dc) do
+			if(dc[k]._added) then dc._deleted = nil dc._changed = 1 end
+			if(dc[k]._deleted) then dc._added = nil dc._changed = 1 end
+			if(dc[k]._changed) then dc._deleted = nil dc._added = nil dc._changed = 1 end
+		end
+		if(dc._added or dc._deleted) then dc._changed = nil end
+	end
+end	
+
+
+function alter_node(dc, mc, fields)
 	-- make sure we have the structures we need in this node
 	if(not dc._fields_deleted) then dc._fields_deleted = {} end
 	if(not dc._fields_added) then dc._fields_added = {} end
@@ -704,7 +746,6 @@ function alter_config(delta, master, path, fields)
 			goto set
 		end
 
-
 		-- if the field is already set, then this is either a change or
 		-- an overwrite of an existing change or add
 		if(dc[k]) then
@@ -725,8 +766,31 @@ function alter_config(delta, master, path, fields)
 	if(not next(dc._fields_deleted)) then dc._fields_deleted = nil end
 	if(not next(dc._fields_added)) then dc._fields_added = nil end
 	if(not next(dc._fields_changed)) then dc._fields_changed = nil end
+	dc._added = nil
+	dc._deleted = nil
+	dc._changed = nil
 
-	-- TODO: process parent nodes now to properly set the disposition
+	-- now we can work out if we are all added, deleted, changed or static
+	if(dc._fields_deleted or dc._fields_added or dc._fields_changed) then
+		-- if all of our fields are in _fields_added then we are added
+		-- if we have nothing but deleted_fields then we are deleted
+		local is_added = (dc._fields_added and true) or false
+		local is_deleted = (dc._fields_deleted and true) or false
+		if(is_added or is_deleted) then
+			for k, v in pairs(dc) do
+				if(string.sub(k, 1, 1) ~= "_") then
+					is_deleted = false
+					if(not dc._fields_added[k]) then
+						is_added = false
+						break
+					end
+				end
+			end
+		end
+		if(is_added) then dc._added = 1
+		elseif(is_deleted) then dc._deleted = 1
+		else dc._changed = 1 end
+	end
 end
 
 CONFIG.delta = {
@@ -740,10 +804,10 @@ CONFIG.delta = {
 	}
 }
 alter_config(CONFIG.delta, CONFIG.master, "/interface", nil)
-dump(CONFIG.delta)
-show_config(CONFIG.delta, CONFIG.master)
+--dump(CONFIG.delta)
+--show_config(CONFIG.delta, CONFIG.master)
 print("--------------")
-alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "address=1.2.3.3/1", "speed=45" })
+alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "address=1.2.3.3/1", "speed=40", "duplex=auto" })
 dump(CONFIG.delta)
 show_config(CONFIG.delta, CONFIG.master)
 print("--------------")
