@@ -571,7 +571,7 @@ function field_values(t)
 		i = i + 1
 		if(t[i]) then
 			local k, op, v = string.match(t[i], "^(%a[^=]-)([+-]?)=(.*)$")
-			if(#op == 0) then op = nil end
+			if(op and #op == 0) then op = nil end
 			if(k) then 
 				-- convert to a number if it makes sense
 				if(string.match(v, "^%-?%d+$") or string.match(v, "^%-?%d*%.%d+$")) then
@@ -779,14 +779,15 @@ function alter_node(dc, mc, fields)
 		-- want to do anything
 		if(dc[k] == v) then goto continue end
 
-		-- handle field deletion ... it is hasn't been added, and wasn't deleted
-		-- before then mark it as deleted.
-		-- otherwise we can jut clear up the adds/changes references
+		-- lists are complicated so we will handle them separately
 		if(string.sub(mc[k]._type, 1, 5) == "list/") then
 			alter_list(dc, k, v, list_op)
 			goto continue
 		end
 	
+		-- handle field deletion ... it is hasn't been added, and wasn't deleted
+		-- before then mark it as deleted.
+		-- otherwise we can jut clear up the adds/changes references
 		if(v == nil) then
 			if(not is_added and not deleted_val) then
 				dc._fields_deleted[k] = dc[k]
@@ -799,7 +800,6 @@ function alter_node(dc, mc, fields)
 		-- if we are putting the original, deleted, or changed value back
 		-- then we need to remove the changed/deleted status since we
 		-- are back to previous
-		-- (note that this won't work for a list)
 		if(deleted_val == v or changed_val == v) then
 			dc._fields_deleted[k] = nil
 			dc._fields_changed[k] = nil
@@ -867,8 +867,7 @@ CONFIG.delta = {
 			["0"] = { 
 				address = "1.2.3.3/1",
 				speed = 40,
---				secondaries = { "1.1.1.1/16", "2.2.2.2/8", "3.3.3.3/24" }
-				secondaries = { "3.3.3.3/1", "2.2.2.2/8" }
+				secondaries = { "1.1.1.1/16", "2.2.2.2/8", "3.3.3.3/24" }
 			}
 		}
 	}
@@ -876,7 +875,7 @@ CONFIG.delta = {
 --alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "secondaries"})
 alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "secondaries-=2.2.2.2/8"})
 dump(CONFIG.delta)
-alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "secondaries+=2.2.2.2/8"})
+alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "secondaries", "secondaries+=2.2.2.2/8"})
 --alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/2", { "address=1.2.3.3/1", "speed=40", "duplex=auto" })
 --dump(CONFIG.delta)
 --show_config(CONFIG.delta, CONFIG.master)
