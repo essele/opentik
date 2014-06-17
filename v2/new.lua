@@ -298,6 +298,54 @@ function list_children(delta, master)
 end
 
 --
+-- given a node, we need to work out if it's an add, change, or
+-- delete.
+-- delete = no fields (i.e. all in ._fields_deleted
+-- add = no fields that aren't in ._fields_added
+-- nothing = no directives at all
+-- change = anything else
+--
+function node_disposition(delta)
+	-- if we are a container, then it's simple...
+	if(has_children(delta)) then
+		if(delta._added) then return("+")
+		elseif(delta._deleted) then return("-")
+		elseif(delta._changed) then return(" ")			-- makes it look better
+		else return(" ") end
+	end
+
+	-- otherwise process the fields...
+	-- steady state first...
+	if(not delta._fields_added and not delta._fields_deleted and not delta._fields_changed) then
+		return(" ")
+	end
+
+	-- now check for other conditions
+	local is_added = (delta._fields_added and true) or false
+	local is_deleted = (delta._fields_deleted and true) or false
+
+	-- if we think we might be added or deleted then check each field
+	if(is_added or is_deleted) then
+		for k,v in pairs(delta) do
+			if(string.sub(k, 1, 1) ~= "_") then
+				is_deleted = false
+				if(is_added) then
+					if(not delta._fields_added[k]) then
+						is_added = false
+						break
+					end
+				end
+			end
+		end
+	end
+
+	-- return the right thing
+	if(is_added) then return("+") 
+	elseif(is_deleted) then return("-")
+	else return("|") end
+end
+
+--
 -- Use the information in the list structure to show the original list with
 -- adds and deletes highlighted.
 --
@@ -378,10 +426,11 @@ function show_config(delta, master, indent, parent)
 		end
 
 		-- work out how we need to be shown
-		local operation = " "
-		if(dc._added) then operation = "+"
-		elseif(dc._deleted) then operation = "-"
-		elseif(dc._changed) then operation = "|" end
+--		local operation = " "
+--		if(dc._added) then operation = "+"
+--		elseif(dc._deleted) then operation = "-"
+--		elseif(dc._changed) then operation = "|" end
+		local operation = node_disposition(dc)
 
 		local label = (parent and (parent.." "..k)) or k
 
@@ -549,29 +598,34 @@ function alter_config(delta, master, path, fields)
 	-- need to clean the config since any other directives become
 	-- invalid
 	if(not fields) then
-		if(not dc._deleted) then
-			if(has_children(dc)) then
-				-- if we have children we recurse
-				for _,k in ipairs(list_children(dc, mc)) do
-					print("woudl recurse for : " .. k)
-					alter_config(delta, master, path .. "/" .. k, nil)
-				end
-				dc._deleted = 1
-			else
-				-- otherwise we move our fields
-				print("would delete fields")
-				dc._deleted = {}
-				for _, k in ipairs(list_all_fields(mc)) do
+		if(has_children(dc)) then
+			-- if we have children we recurse
+			for _,k in ipairs(list_children(dc, mc)) do
+				print("woudl recurse for : " .. k)
+				alter_config(delta, master, path .. "/" .. k, nil)
+			end
+			dc._deleted = 1
+		else
+			-- otherwise we move our fields
+			print("would delete fields")
+			if(not dc._fields_deleted) then dc._fields_deleted = {} end
+			for _, k in ipairs(list_all_fields(mc)) do
+				if(not dc._fields_added or not dc._fields_added[k]) then
 					if(dc[k]) then
-						dc._deleted[k] = dc[k]
-						dc[k] = nil
+						dc._fields_deleted[k] = dc[k]
 					end
 				end
+				dc[k] = nil
 			end
+			dc._fields_added = nil
+			dc._fields_updated = nil
 		end
 		print("Would delete this whole node")
+-- TODO: process parent nodes to set disposition
 		return true
 	end
+
+	-- todo, exit here if we are a container
 
 	-- check all the supplied fields are valid
 	for k, v in field_values(fields) do
@@ -592,20 +646,25 @@ function alter_config(delta, master, path, fields)
 			dc[key] = { _added = 1 }
 		elseif(dc[key]._deleted) then
 			dc[key]._deleted = nil
---			dc[key]._added = 1
 		else
 			dc[key]._changed = 1
 		end
 		dc = dc[key]
     end
 
-	-- make sure we have the structures we need
+	-- since we know that we are now the container we can
+	-- remove the added, changed, deleted flags
+	dc._added = nil
+	dc._deleted = nil
+	dc._changed = nil
+	
+
+	-- make sure we have the structures we need in this node
 	if(not dc._fields_deleted) then dc._fields_deleted = {} end
 	if(not dc._fields_added) then dc._fields_added = {} end
 	if(not dc._fields_changed) then dc._fields_changed = {} end
 	
 	-- now we can set the actual fields
---	for k,v in pairs(fields) do
 	for k,v in field_values(fields) do
 		local is_added = dc._fields_added[k]
 		local deleted_val = dc._fields_deleted[k]
@@ -615,13 +674,11 @@ function alter_config(delta, master, path, fields)
 		-- want to do anything
 		if(dc[k] == v) then goto set end
 
-		-- if we are deleting a field if it's marked as added
-		-- then we don't need to show the deleted version
-		-- if it's already deleted then we don't update
+		-- handle field deletion ... it is hasn't been added, and wasn't deleted
+		-- before then mark it as deleted.
+		-- otherwise we can jut clear up the adds/changes references
 		if(v == nil) then
-			print("deletign "..k.. "isadd="..tostring(is_added).." delvar="..tostring(deleted_val))
 			if(not is_added and not deleted_val) then
-				print("YEAH was="..dc[k])
 				dc._fields_deleted[k] = dc[k]
 			end
 			dc._fields_changed[k] = nil
@@ -649,7 +706,7 @@ function alter_config(delta, master, path, fields)
 
 
 		-- if the field is already set, then this is either a change or
-		-- and overwrite of an existing change or add
+		-- an overwrite of an existing change or add
 		if(dc[k]) then
 			if(not changed_val and not is_added) then
 				dc._fields_changed[k] = dc[k]
@@ -663,6 +720,13 @@ function alter_config(delta, master, path, fields)
 		-- actually set the value	
 		dc[k] = v
 	end
+
+	-- tidy up the directives...
+	if(not next(dc._fields_deleted)) then dc._fields_deleted = nil end
+	if(not next(dc._fields_added)) then dc._fields_added = nil end
+	if(not next(dc._fields_changed)) then dc._fields_changed = nil end
+
+	-- TODO: process parent nodes now to properly set the disposition
 end
 
 CONFIG.delta = {
@@ -676,7 +740,10 @@ CONFIG.delta = {
 	}
 }
 alter_config(CONFIG.delta, CONFIG.master, "/interface", nil)
-alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "address", "speed=40" })
+dump(CONFIG.delta)
+show_config(CONFIG.delta, CONFIG.master)
+print("--------------")
+alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "address=1.2.3.3/1", "speed=45" })
 dump(CONFIG.delta)
 show_config(CONFIG.delta, CONFIG.master)
 print("--------------")
