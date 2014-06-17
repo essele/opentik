@@ -338,9 +338,9 @@ function show_fields(delta, master, indent)
 	-- now show the less dramatic adds, deletes and changes
 	--
 	for _, k in ipairs(fields) do
-		if(delta[k]) then
+		value = delta[k] or (delta._fields_deleted and delta._fields_deleted[k])
+		if(value) then
 			local operation = " "
-			local value = delta[k]
 
 			if(delta._added) then 
 				operation = "+"
@@ -348,7 +348,6 @@ function show_fields(delta, master, indent)
 				operation = "+"
 			elseif(delta._fields_deleted and delta._fields_deleted[k]) then 
 				operation = "-"
-				value = delta._fields_deleted[k]
 			elseif(delta._fields_changed and delta._fields_changed[k]) then 
 				operation = "|" 
 			end
@@ -509,10 +508,34 @@ function get_node(path, m, d)
 end
 
 --
+-- an iterator function that goes through our list of key=value
+-- fields so we return either key,value or field,nil
+--
+function field_values(t)
+	local i = 0
+	local n = #t
+	return function()
+		i = i + 1
+		if(t[i]) then
+			print("i="..i.." t[i]="..tostring(t[i]))
+			local k, v = string.match(t[i], "^([^=]+)=(.*)$")
+			if(k) then 
+				-- convert to a number if it makes sense
+				if(string.match(v, "^%-?%d+$") or string.match(v, "^%-?%d*%.%d+$")) then
+					v = v + 0
+				end
+				return k, v 
+			end
+		end
+		return t[i]
+	end
+end
+
+--
 -- Set <node> field=value field=value ...
 -- delete <node> [field] [field]
 --
-function alter_config(delta, master, path, operation, fields)
+function alter_config(delta, master, path, fields)
 
 	-- check the node is valid
 	local mc, dc = get_node(path, master, delta)
@@ -522,25 +545,42 @@ function alter_config(delta, master, path, operation, fields)
 	end
 
 	-- if operation is del and no fields are supplied then
-	-- we simply need to recurse and delete everything
-	if(operation == "del" and not fields) then
+	-- we need to recurse and mark everything as deleted but we also
+	-- need to clean the config since any other directives become
+	-- invalid
+	if(not fields) then
+		if(not dc._deleted) then
+			if(has_children(dc)) then
+				-- if we have children we recurse
+				for _,k in ipairs(list_children(dc, mc)) do
+					print("woudl recurse for : " .. k)
+					alter_config(delta, master, path .. "/" .. k, nil)
+				end
+				dc._deleted = 1
+			else
+				-- otherwise we move our fields
+				print("would delete fields")
+				dc._deleted = {}
+				for _, k in ipairs(list_all_fields(mc)) do
+					if(dc[k]) then
+						dc._deleted[k] = dc[k]
+						dc[k] = nil
+					end
+				end
+			end
+		end
 		print("Would delete this whole node")
 		return true
 	end
 
 	-- check all the supplied fields are valid
-	for k, v in pairs(fields) do
+	for k, v in field_values(fields) do
 		if(not mc[k]) then
 			print("invalid field: " .. k)
 			return false
 		end
 		-- todo: validate if not del
 	end
-
-	-- if we are deleting fields, check if at least one is there
-	-- otherwise we can just exit
-	-- TODO
-
 
 	-- we know it's going to work, so we can build the structure
 	-- if needed
@@ -552,7 +592,7 @@ function alter_config(delta, master, path, operation, fields)
 			dc[key] = { _added = 1 }
 		elseif(dc[key]._deleted) then
 			dc[key]._deleted = nil
-			dc[key]._added = 1
+--			dc[key]._added = 1
 		else
 			dc[key]._changed = 1
 		end
@@ -565,27 +605,29 @@ function alter_config(delta, master, path, operation, fields)
 	if(not dc._fields_changed) then dc._fields_changed = {} end
 	
 	-- now we can set the actual fields
-	for k,v in pairs(fields) do
+--	for k,v in pairs(fields) do
+	for k,v in field_values(fields) do
 		local is_added = dc._fields_added[k]
 		local deleted_val = dc._fields_deleted[k]
 		local changed_val = dc._fields_changed[k]
 
+		-- if we're setting to the same value, then we don't really
+		-- want to do anything
+		if(dc[k] == v) then goto set end
+
 		-- if we are deleting a field if it's marked as added
 		-- then we don't need to show the deleted version
 		-- if it's already deleted then we don't update
-		if(v == false) then
+		if(v == nil) then
+			print("deletign "..k.. "isadd="..tostring(is_added).." delvar="..tostring(deleted_val))
 			if(not is_added and not deleted_val) then
+				print("YEAH was="..dc[k])
 				dc._fields_deleted[k] = dc[k]
 			end
 			dc._fields_changed[k] = nil
 			dc._fields_added[k] = nil
-			v= nil
 			goto set
 		end
-
-		-- if we're setting to the same value, then we don't really
-		-- want to do anything
-		if(dc[k] == v) then goto set end
 
 		-- if we are putting the original, deleted, or changed value back
 		-- then we need to remove the changed/deleted status since we
@@ -627,22 +669,23 @@ CONFIG.delta = {
 	interface = {
 		ethernet = {
 			["0"] = { 
+				address = "1.2.3.3/1",
 				speed = 40
 			}
 		}
 	}
 }
-alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", "add",
-			{ address="1.2.3.4/8", speed=40 } )
+alter_config(CONFIG.delta, CONFIG.master, "/interface", nil)
+alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "address", "speed=40" })
 dump(CONFIG.delta)
 show_config(CONFIG.delta, CONFIG.master)
 print("--------------")
-alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", "add",
-			{ address="1.6.6.4/8", speed=88 } )
+--alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0",
+--			{ address="1.6.6.4/8", speed=88 } )
 dump(CONFIG.delta)
 print("--------------")
-alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", "add",
-			{ address=false, speed=40 } )
+--alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0",
+--			{ address=false, speed=40 } )
 
 
 dump(CONFIG.delta)
