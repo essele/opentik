@@ -49,6 +49,7 @@ CONFIG.master = {
 		_depends = { "interface", "dns" }
 	},
 	["fred"] = {
+		_show_together = 1,
 		["*"] = {
 			_function = function() return true end,
 			["value"] = {
@@ -370,6 +371,7 @@ function show_fields(delta, master, indent)
 			end
 
 			if(type(value) == "table") then
+				if(k == "comment") then k = "#" end
 				show_list(operation, k, value, indent)
 			else
 				print(operation .. " " .. string.rep(" ", indent) .. k .. "=" .. tostring(value))
@@ -383,6 +385,25 @@ end
 -- Recursive function to show a delta config. We highlight anything that needs to
 -- be added or removed (including changes to lists)
 --
+function new_show_config(delta, master, indent, parent)
+	indent = indent or 0
+
+	show_fields(delta, master, indent)
+	for k in each_container(delta, master) do
+		local dc = delta[k]
+		local mc = master[k] or master["*"]
+		local label = (parent and (parent .. " " .. k)) or k
+
+		if(mc._show_together) then
+			new_show_config(dc, mc, indent, k)
+		else	
+			print("X" .. " " .. string.rep(" ", indent) .. label .. " {")
+			new_show_config(dc, mc, indent+4)
+			print("X" .. " " .. string.rep(" ", indent) .. "}")
+		end
+	end
+end
+
 function show_config(delta, master, indent, parent)
 	indent = indent or 0
 
@@ -892,6 +913,7 @@ end
 -- find only fields we don't mark the _container.
 --
 -- Also add the comment field to every node.
+-- Create the _order directive for each node.
 --
 -- This is a critical function that marks the fields and
 -- containers so we can use the 'each_field', 'each_container'
@@ -899,6 +921,10 @@ end
 --
 function prepare_master(master)
 	local has_children = nil
+	local sorted = master._order or {}
+	local unsorted = {}
+
+	if(not is_in_list(sorted, "comment")) then table.insert(sorted, 1, "comment") end
 
 	for k in non_directive_fields(master) do
 		local is_list = master[k]._type and string.sub(master[k]._type, 1, 5) == "list/"
@@ -907,30 +933,61 @@ function prepare_master(master)
 			prepare_master(master[k])
 			has_children = 1
 		end
+		if(not is_in_list(sorted, k)) then table.insert(unsorted, k) end
 	end
+	table.sort(unsorted)
+	append_list(sorted, unsorted)
+
 	master._has_children = has_children
+	master._order = sorted
 	master.comment = { _type = "list/comment" }
 end
 
 --
 -- Functions that return iterators for getting the fields
--- and the containers
+-- and the containers. Each field will return the fields in the
+-- order specified in the master (or alphabetically sorted)
 --
 function each_field(dc, mc)
-	local last = nil
+	local i = 0
+	local order = mc._order
+
 	return function()
 		while(1) do
-			last = next(dc, last)						-- get next item
-			if(not last) then return nil end			-- if nil then end
-			if(string.sub(last, 1, 1) ~= "-") then		-- for non directives
-				local m = mc[last] or mc["*"]			-- get the right mc node
-				if(not m._has_children) then 
-					return last 
-				end
-			end
+			i = i + 1
+			if(not order[i]) then return nil end
+			if(dc[order[i]]) then return order[i] end
 		end
 	end
 end
+function each_container(dc, mc)
+	local clist = {}
+	local i = 0
+
+	-- build all the wildcards
+	local wild = {}
+	if(mc["*"]) then
+		for k, _ in pairs(dc) do
+			if(string.sub(k, 1, 1) ~= "_" and not mc[k]) then table.insert(wild, k) end
+		end
+	end
+
+	-- build the full order
+	for _, k in ipairs(mc.order) do
+		if(k == "*") then append_list(clist, wild)
+		else table.insert(clist, k) end
+	end
+
+	-- now prepare the function...
+	return function()
+		while(1) do
+			i = i + 1
+			if(not clist[i]) then return nil end
+			if(dc[clist[i]]) then return clist[i] end
+		end
+	end
+end	
+
 function each_container(dc, mc)
 	local last = nil
 	return function()
@@ -970,6 +1027,7 @@ CONFIG.delta = {
 		}
 	},
 	fred = {
+		comment = { "one", "two", "three" },
 		["one"] = {
 			value = 44
 		},
@@ -994,6 +1052,7 @@ for k in each_field(d, m) do
 end
 
 print("HF: "..tostring(new_has_fields(d, m)))
+new_show_config(CONFIG.delta, CONFIG.master)
 
 -- TODO TODO TODO TODO
 --
@@ -1013,7 +1072,6 @@ print("HF: "..tostring(new_has_fields(d, m)))
 -- alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "address=1.2.3.3/1", "speed=40", "duplex=auto" })
 -- alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/1", { "address=5.2.3.3/1", "speed=40", "duplex=auto" })
 -- dump(CONFIG.delta)
--- show_config(CONFIG.delta, CONFIG.master)
 
 --alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "secondaries", "secondaries+=2.2.2.2/8"})
 --dump(CONFIG.delta)
