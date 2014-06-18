@@ -455,7 +455,7 @@ function apply_delta(delta, active, master, originals, completed, ppath)
 
 		-- we only care about stuff that has changed in some way
 		if(dc._added or dc._deleted or dc._changed) then
-			-- TODO: check dependencies are met
+			-- TODO: partner dependencies?
 			if(mc._depends) then
 				for _,d in ipairs(mc._depends) do
 					if(not completed[d]) then
@@ -647,15 +647,8 @@ function alter_config(delta, master, path, fields)
 		goto cleanup
 	end
 
-	-- we shouldn't really get here if we are a container
---	if(has_children(dc)) then
---		print("AAARGGGHHHH!!!!")
---		return false
---	end
-
-	-- check all the supplied fields are valid, remove the leading minus
-	-- if we are a list op
-	--
+	-- check all the supplied fields are valid, if we are a comment
+	-- then we create the master entry
 	for k, v, op in field_values(fields) do
 		if(not mc[k]) then
 			print("invalid field: " .. k)
@@ -666,7 +659,6 @@ function alter_config(delta, master, path, fields)
 			return false
 		end
 		if(v or op ~= "-") then only_delete=false end
-	
 		-- todo: validate if not del
 	end
 
@@ -889,6 +881,28 @@ function alter_node(dc, mc, fields)
 	end
 end
 
+--
+-- Add comment fields to all the master records so that we can support
+-- comments for each end node. We need to detect 'nodes' by making sure
+-- that any children don't have further children!
+--
+function add_master_comments(master)
+	local is_node = true
+
+	for k1 in non_directive_fields(master) do
+		print("--> " .. k1)
+		for k2 in non_directive_fields(master[k1]) do
+			is_node = false
+			break
+		end
+		if(not is_node) then
+			add_master_comments(master[k1])
+		else
+			master._LEE = 1
+		end
+	end
+end
+
 CONFIG.delta = {
 	interface = {
 		ethernet = {
@@ -900,22 +914,40 @@ CONFIG.delta = {
 		}
 	}
 }
+
+-- TODO: populate comment field in master!
+add_master_comments(CONFIG.master)
+dump(CONFIG.master)
+
+-- TODO TODO TODO TODO
+--
+-- Still to do:
+-- 1. think about partners
+-- 2. deal with comments properly
+-- 3. load/save config
+-- 4. handle "file"/"data" types
+--
+
+
 --alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "secondaries"})
-alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", nil)
-alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "secondaries-=2.2.2.2/8"})
-alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "address=1.2.3.3/1", "speed=40", "duplex=auto" })
-alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/1", { "address=5.2.3.3/1", "speed=40", "duplex=auto" })
+--alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", nil)
+
+-- alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "secondaries-=2.2.2.2/8",
+--					"comment=", "comment=hello there", "comment=you" })
+-- alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "address=1.2.3.3/1", "speed=40", "duplex=auto" })
+-- alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/1", { "address=5.2.3.3/1", "speed=40", "duplex=auto" })
+-- dump(CONFIG.delta)
+-- show_config(CONFIG.delta, CONFIG.master)
+
 --alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "secondaries", "secondaries+=2.2.2.2/8"})
 --dump(CONFIG.delta)
 --show_config(CONFIG.delta, CONFIG.master)
-print("--------------")
---alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "address=1.2.3.3/1", "speed=40", "duplex=auto" })
-dump(CONFIG.delta)
-show_config(CONFIG.delta, CONFIG.master)
-print("--------------")
-revert_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0")
-dump(CONFIG.delta)
-show_config(CONFIG.delta, CONFIG.master)
+--print("--------------")
+--alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "comment", "comment=fred" })
+--print("--------------")
+--revert_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0")
+--dump(CONFIG.delta)
+--show_config(CONFIG.delta, CONFIG.master)
 --alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0",
 --			{ address="1.6.6.4/8", speed=88 } )
 --dump(CONFIG.delta)
