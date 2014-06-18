@@ -243,6 +243,15 @@ function non_directive_fields(t)
 end
 
 --
+-- remove all directives (non-recursively)
+--
+function remove_directives(t)
+	for k,_ in pairs(t) do
+		if(string.sub(k, 1, 1) == "_") then t[k] = nil end
+	end
+end
+
+--
 -- Return all the fields from the master definition in the supplied order
 -- or alphabetically. We also add comment on the front if it's not included
 --
@@ -315,52 +324,6 @@ function list_children(delta, master)
 end
 
 --
--- given a node, we need to work out if it's an add, change, or
--- delete.
--- delete = no fields (i.e. all in ._fields_deleted
--- add = no fields that aren't in ._fields_added
--- nothing = no directives at all
--- change = anything else
---
-function node_disposition(delta)
-	-- if we are a container, then it's simple...
-	if(has_children(delta)) then
-		if(delta._added) then return("+")
-		elseif(delta._deleted) then return("-")
-		elseif(delta._changed) then return(" ")			-- makes it look better
-		else return(" ") end
-	end
-
-	-- otherwise process the fields...
-	-- steady state first...
-	if(not delta._fields_added and not delta._fields_deleted and not delta._fields_changed) then
-		return(" ")
-	end
-
-	-- now check for other conditions
-	local is_added = (delta._fields_added and true) or false
-	local is_deleted = (delta._fields_deleted and true) or false
-
-	-- if we think we might be added or deleted then check each field
-	if(is_added or is_deleted) then
-		for k in non_directive_fields(delta) do
-			is_deleted = false
-			if(is_added) then
-				if(not delta._fields_added[k]) then
-					is_added = false
-					break
-				end
-			end
-		end
-	end
-
-	-- return the right thing
-	if(is_added) then return("+") 
-	elseif(is_deleted) then return("-")
-	else return("|") end
-end
-
---
 -- Use the information in the list structure to show the original list with
 -- adds and deletes highlighted.
 --
@@ -428,12 +391,10 @@ function show_config(delta, master, indent, parent)
 			goto continue
 		end
 
-		-- work out how we need to be shown
---		local operation = " "
---		if(dc._added) then operation = "+"
---		elseif(dc._deleted) then operation = "-"
---		elseif(dc._changed) then operation = "|" end
-		local operation = node_disposition(dc)
+		-- work out how we need to be shown, we'll ignore change for containers
+		local operation = " "
+		if(dc._added) then operation = "+"
+		elseif(dc._deleted) then operation = "-" end
 
 		local label = (parent and (parent.." "..k)) or k
 
@@ -614,10 +575,63 @@ function delete_config(delta, master)
 end
 
 --
+-- revert a given section of config by making sure everything is back to
+-- normal.
+-- 1. put all _fields_deleted and _updated_fields back
+-- 2. delete all _fields_added
+-- 3. remove all directives
+--
+function revert_config(delta, master, path)
+	local mc = master
+	local dc = delta
+	-- if we have a path provided then we are top level, otherwise we are recursing
+	if(path) then
+		mc, dc = get_node(path, master, delta)
+		if(not mc or not dc) then
+			print("invalid path: " .. path)
+			return false
+		end
+	end
+
+	if(has_children(dc)) then
+		for k in non_directive_fields(dc) do
+			revert_config(dc[k], mc[k] or mc["*"])
+		end
+	else
+		for _,k in ipairs(list_all_fields(mc)) do
+			if(dc._fields_deleted and dc._fields_deleted[k]) then
+				dc[k] = dc._fields_deleted[k]
+				dc._fields_deleted[k] = nil
+			end
+			if(dc._fields_changed and dc._fields_changed[k]) then
+				dc[k] = dc._fields_changed[k]
+				dc._fields_changed[k] = nil
+				-- revert any changed lists if needed
+				if(dc[k]._original_list) then
+					dc[k] = dc[k]._original_list
+				end
+			end
+			if(dc._fields_added and dc._fields_added[k]) then
+				dc[k] = nil
+				dc._fields_added[k] = nil
+			end
+		end
+	end
+	remove_directives(dc)
+
+	--
+	-- if we are the top level, then we will have "path" so we can run
+	-- through and re-eval change status for our parent structure
+	--
+	if(path) then parent_status_update(delta, master, path) end
+end
+
+--
 -- Set <node> field=value field=value ...
 -- delete <node> [field] [field]
 --
 function alter_config(delta, master, path, fields)
+	local only_delete = true
 
 	-- check the node is valid
 	local mc, dc = get_node(path, master, delta)
@@ -634,10 +648,10 @@ function alter_config(delta, master, path, fields)
 	end
 
 	-- we shouldn't really get here if we are a container
-	if(not has_children(mc)) then
-		print("AAARGGGHHHH!!!!")
-		return false
-	end
+--	if(has_children(dc)) then
+--		print("AAARGGGHHHH!!!!")
+--		return false
+--	end
 
 	-- check all the supplied fields are valid, remove the leading minus
 	-- if we are a list op
@@ -651,27 +665,38 @@ function alter_config(delta, master, path, fields)
 			print("list operation on non-list: " .. k)
 			return false
 		end
+		if(v or op ~= "-") then only_delete=false end
+	
 		-- todo: validate if not del
 	end
 
-	-- we know it's going to work, so we can build the structure
-	-- we need to contain the node
-	mc = master
-	dc = delta
-    for key in string.gmatch(path, "([^/]+)") do
-        mc = mc[key] or mc["*"]
-		if(not dc[key]) then dc[key] = {} end
-		dc = dc[key]
-    end
+	-- if we are adding or changing then at this point we know we
+	-- are going to be successful (we can't fail) so we can build
+	-- the structure to support the change if it's not present
+	if(not only_delete) then
+		mc = master
+		dc = delta
+		for key in string.gmatch(path, "([^/]+)") do
+			mc = mc[key] or mc["*"]
+			if(not dc[key]) then dc[key] = {} end
+			dc = dc[key]
+		end
+	end
 
 	-- now we can make the actual change to the node
 	alter_node(dc, mc, fields)
 
 ::cleanup::
+	parent_status_update(delta, master, path)
+end
+
+function parent_status_update(delta, master, path)
 	-- check all the parent nodes and mark them as appropriate
 	while(#path > 0) do
 		path = string.gsub(path, "/[^/]+$", "")
 		mc, dc = get_node(path, master, delta)
+
+		print("GN: path="..path.." mc="..tostring(mc).." dc="..tostring(dc))
 
 		-- prepare
 		dc._changed = nil
@@ -687,16 +712,21 @@ function alter_config(delta, master, path, fields)
 			elseif(dc[k]._deleted) then dc._added = nil dc._changed = 1 
 			elseif(dc[k]._changed) then dc._deleted = nil dc._added = nil dc._changed = 1
 			else dc._added = nil dc._deleted = nil end
+
+			-- if our field is empty, then delete it
+			if(not next(dc[k])) then dc[k]=nil end
 		end
 		if(dc._added or dc._deleted) then dc._changed = nil end
 	end
 end	
 
 function alter_list(dc, k, value, list_op)
-	-- if we are deleting the last item in the list then we need to switch
-	-- to a full delete, since it's the same as the whole list going
-	if(list_op == "-" and dc[k][1] == value and not dc[k][2]) then
-		value = nil
+	-- if we are delteing from a list, make sure the item is there.
+	-- if it's the last item then switch to dull delete since it's the
+	-- same as the whole list being deleteted
+	if(list_op == "-") then
+		if(not dc[k] or not is_in_list(dc[k], value)) then return end
+		if(dc[k][1] == value and not dc[k][2]) then value = nil end
 	end
 
 	-- no value means delete the whole list, so this is a revert to original
@@ -713,9 +743,6 @@ function alter_list(dc, k, value, list_op)
 		dc[k] = nil
 		return
 	end
-
-	-- if we are trying to delete an item that isn't in the list then we do nothing
-	if(list_op == "-" and not is_in_list(dc[k], value)) then return end
 
 	-- if we are adding or removing something, but we were shown as deleted then 
 	-- we need to undelete our field, and then mark each item as deleted. If we 
@@ -775,8 +802,8 @@ function alter_node(dc, mc, fields)
 		local deleted_val = dc._fields_deleted[k]
 		local changed_val = dc._fields_changed[k]
 
-		-- if we're setting to the same value, then we don't really
-		-- want to do anything
+		-- if we're deleting the field and it doesn't exist or if
+		-- it's set to the same value then don't do anything
 		if(dc[k] == v) then goto continue end
 
 		-- lists are complicated so we will handle them separately
@@ -801,6 +828,7 @@ function alter_node(dc, mc, fields)
 		-- then we need to remove the changed/deleted status since we
 		-- are back to previous
 		if(deleted_val == v or changed_val == v) then
+			-- TODO: remove directives(dc)
 			dc._fields_deleted[k] = nil
 			dc._fields_changed[k] = nil
 			dc._fields_added[k] = nil
@@ -873,10 +901,11 @@ CONFIG.delta = {
 	}
 }
 --alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "secondaries"})
+alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", nil)
 alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "secondaries-=2.2.2.2/8"})
-dump(CONFIG.delta)
-alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "secondaries", "secondaries+=2.2.2.2/8"})
---alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/2", { "address=1.2.3.3/1", "speed=40", "duplex=auto" })
+alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "address=1.2.3.3/1", "speed=40", "duplex=auto" })
+alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/1", { "address=5.2.3.3/1", "speed=40", "duplex=auto" })
+--alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "secondaries", "secondaries+=2.2.2.2/8"})
 --dump(CONFIG.delta)
 --show_config(CONFIG.delta, CONFIG.master)
 print("--------------")
@@ -884,6 +913,9 @@ print("--------------")
 dump(CONFIG.delta)
 show_config(CONFIG.delta, CONFIG.master)
 print("--------------")
+revert_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0")
+dump(CONFIG.delta)
+show_config(CONFIG.delta, CONFIG.master)
 --alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0",
 --			{ address="1.6.6.4/8", speed=88 } )
 --dump(CONFIG.delta)
