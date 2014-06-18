@@ -54,6 +54,9 @@ CONFIG.master = {
 			["value"] = {
 				_type = "blah"
 			}
+		},
+		["lee"] = {
+			_type = "blah"
 		}
 	},
 	["test"] = {
@@ -882,26 +885,79 @@ function alter_node(dc, mc, fields)
 end
 
 --
--- Add comment fields to all the master records so that we can support
--- comments for each end node. We need to detect 'nodes' by making sure
--- that any children don't have further children!
+-- Run through the master structure and work out if we have
+-- children (_container.)
 --
-function add_master_comments(master)
-	local is_node = true
+-- Children are detected by recursing through and when we
+-- find only fields we don't mark the _container.
+--
+-- Also add the comment field to every node.
+--
+-- This is a critical function that marks the fields and
+-- containers so we can use the 'each_field', 'each_container'
+-- functions
+--
+function prepare_master(master)
+	local has_children = nil
 
-	for k1 in non_directive_fields(master) do
-		print("--> " .. k1)
-		for k2 in non_directive_fields(master[k1]) do
-			is_node = false
-			break
+	for k in non_directive_fields(master) do
+		local is_list = master[k]._type and string.sub(master[k]._type, 1, 5) == "list/"
+
+		if(not is_list) then
+			prepare_master(master[k])
+			has_children = 1
 		end
-		if(not is_node) then
-			add_master_comments(master[k1])
-		else
-			master._LEE = 1
+	end
+	master._has_children = has_children
+	master.comment = { _type = "list/comment" }
+end
+
+--
+-- Functions that return iterators for getting the fields
+-- and the containers
+--
+function each_field(dc, mc)
+	local last = nil
+	return function()
+		while(1) do
+			last = next(dc, last)						-- get next item
+			if(not last) then return nil end			-- if nil then end
+			if(string.sub(last, 1, 1) ~= "-") then		-- for non directives
+				local m = mc[last] or mc["*"]			-- get the right mc node
+				if(not m._has_children) then 
+					return last 
+				end
+			end
 		end
 	end
 end
+function each_container(dc, mc)
+	local last = nil
+	return function()
+		while(1) do
+			last = next(dc, last)						-- get next item
+			if(not last) then return nil end			-- if nil then end
+			if(string.sub(last, 1, 1) ~= "-") then		-- for non directives
+				local m = mc[last] or mc["*"]			-- get the right mc node
+				if(m._has_children) then 
+					return last 
+				end
+			end
+		end
+	end
+end
+
+--
+-- Some boolean checks for having containers or fields
+--
+function new_has_children(dc, mc)
+	return each_container(dc, mc)() and true
+end
+function new_has_fields(dc, mc)
+	return each_field(dc, mc)() and true
+end
+
+
 
 CONFIG.delta = {
 	interface = {
@@ -912,12 +968,32 @@ CONFIG.delta = {
 				secondaries = { "1.1.1.1/16", "2.2.2.2/8", "3.3.3.3/24" }
 			}
 		}
+	},
+	fred = {
+		["one"] = {
+			value = 44
+		},
+		["two"] = {
+			value = 99
+		},
+		lee = 88
 	}
 }
 
 -- TODO: populate comment field in master!
-add_master_comments(CONFIG.master)
+prepare_master(CONFIG.master)
 dump(CONFIG.master)
+
+local m, d = get_node("/fred", CONFIG.master, CONFIG.delta)
+
+for k in each_container(d, m) do
+	print("Container: " .. k)
+end
+for k in each_field(d, m) do
+	print("Field: " .. k)
+end
+
+print("HF: "..tostring(new_has_fields(d, m)))
 
 -- TODO TODO TODO TODO
 --
