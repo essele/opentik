@@ -349,9 +349,9 @@ function show_list(parent_op, item, list, indent)
 	end
 end
 
-function show_fields(delta, master, indent)
+function show_fields(delta, master, indent, parent)
 	local fields = list_all_fields(master)
-	
+
 	--
 	-- show the adds, deletes and changes
 	--
@@ -370,6 +370,8 @@ function show_fields(delta, master, indent)
 				operation = "|" 
 			end
 
+			print("PARENT:"..tostring(parent))
+
 			if(type(value) == "table") then
 				if(k == "comment") then k = "#" end
 				show_list(operation, k, value, indent)
@@ -381,6 +383,17 @@ function show_fields(delta, master, indent)
 	end
 end
 
+function new_show_field(delta, master, indent, k)
+	local value = delta[k] or (delta._fields_deleted and delta._fields_deleted[k])
+	if(value) then
+		if(type(value) == "table") then
+			show_list("X", k, value, indent)
+		else
+			print("X" .. " " .. string.rep(" ", indent) .. k .. "=" .. tostring(value))
+		end
+	end
+end
+
 --
 -- Recursive function to show a delta config. We highlight anything that needs to
 -- be added or removed (including changes to lists)
@@ -388,7 +401,21 @@ end
 function new_show_config(delta, master, indent, parent)
 	indent = indent or 0
 
-	show_fields(delta, master, indent)
+	if(delta["comment"] or (delta._fields_deleted and delta._fields_deleted["comment"])) then
+		new_show_field(delta, master, indent, "comment")
+	end
+	if(has_non_comment_fields(delta, master)) then
+		local id = indent
+		if(parent) then print("X" .. " " .. string.rep(" ", indent) .. parent .. " {") end
+		for k in each_field(delta, master) do
+			if(k ~= "comment") then
+				new_show_field(delta, master, indent, k)
+			end
+		end
+		if(parent) then print("X" .. " " .. string.rep(" ", indent) .. "}") end
+	end
+
+--	show_fields(delta, master, indent, parent)
 	for k in each_container(delta, master) do
 		local dc = delta[k]
 		local mc = master[k] or master["*"]
@@ -1013,7 +1040,14 @@ end
 function new_has_fields(dc, mc)
 	return each_field(dc, mc)() and true
 end
-
+function has_non_comment_fields(dc, mc)
+	local fx = each_field(dc, mc)
+	local f = fx()
+	if(f and f == "comment") then
+		f = fx()
+	end
+	return f and true
+end
 
 
 CONFIG.delta = {
