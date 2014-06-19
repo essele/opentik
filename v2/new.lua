@@ -358,7 +358,7 @@ end
 -- Disply and individual field with the appropriate disposition, we use
 -- a separate function to cover lists
 --
-function show_field(delta, master, indent, k)
+function show_field(delta, master, indent, k, dump)
 	local value = delta[k] or (delta._fields_deleted and delta._fields_deleted[k])
 	if(value) then
 		local operation = " "
@@ -367,6 +367,8 @@ function show_field(delta, master, indent, k)
 		elseif(delta._fields_added and delta._fields_added[k]) then operation = "+"
 		elseif(delta._fields_deleted and delta._fields_deleted[k]) then operation = "-"
 		elseif(delta._fields_changed and delta._fields_changed[k]) then operation = "|" end
+
+		if(k == "comment" and not dump) then k = "#" end
 
 		if(type(value) == "table") then
 			show_list(operation, k, value, indent)
@@ -400,8 +402,6 @@ function show_config(delta, master, indent, parent, p_op)
 	end
 
 	for k, dc, mc in each_container(delta, master) do
---		local dc = delta[k]
---		local mc = master[k] or master["*"]
 		local label = (parent and (parent .. " " .. k)) or k
 
 		-- work out how we need to be shown, we'll ignore change for containers
@@ -421,12 +421,9 @@ end
 function dump_config(delta, master, indent)
 	indent = indent or 0
 	for k in each_field(delta, master) do
-		show_field(delta, master, indent, k)
+		show_field(delta, master, indent, k, true)
 	end
 	for k, dc, mc in each_container(delta, master) do
---		local dc = delta[k]
---		local mc = master[k] or master["*"]
-
 		print("  " .. string.rep(" ", indent) .. k .. " {")
 		dump_config(dc, mc, indent+4)
 		print("  " .. string.rep(" ", indent) .. "}")
@@ -607,7 +604,11 @@ function delete_config(delta, master, path)
 	dc._added = nil
 	dc._changed = nil
 
-	-- TODO: parent status update if we have path set
+	--
+	-- if we are the top level, then we will have "path" so we can run
+	-- through and re-eval change status for our parent structure
+	--
+	if(path) then parent_status_update(delta, master, path) end
 end
 
 
@@ -741,6 +742,15 @@ function set_node_status(dc, mc)
 	local dels = 0
 	local changes = 0
 	local static = 0
+
+	-- TODO: if the field change is only a comment then we should add the
+	-- _only_comment directive so that we don't call the function
+	--
+	-- the logic is that we only have one change (add/delete/change) and its
+	-- a comment ... not sure how best to detect that!
+	--
+	-- if a[k] or d[k] or c[k] then add k to a list
+	-- if the list is 1 item and only comment then...
 
 	-- first check for field related stuff
 	for k in each_field(dc, mc) do
