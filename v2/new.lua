@@ -56,6 +56,11 @@ CONFIG.master = {
 				_type = "blah"
 			}
 		},
+		["xxx"] = {
+			["aaa"] = { _type = "blah" },
+			["bbb"] = { _type = "blah" },
+			["ccc"] = { _type = "blah" },
+		},
 		["lee"] = {
 			_type = "blah"
 		}
@@ -349,119 +354,82 @@ function show_list(parent_op, item, list, indent)
 	end
 end
 
-function show_fields(delta, master, indent, parent)
-	local fields = list_all_fields(master)
-
-	--
-	-- show the adds, deletes and changes
-	--
-	for _, k in ipairs(fields) do
-		value = delta[k] or (delta._fields_deleted and delta._fields_deleted[k])
-		if(value) then
-			local operation = " "
-
-			if(delta._added) then 
-				operation = "+"
-			elseif(delta._fields_added and delta._fields_added[k]) then 
-				operation = "+"
-			elseif(delta._fields_deleted and delta._fields_deleted[k]) then 
-				operation = "-"
-			elseif(delta._fields_changed and delta._fields_changed[k]) then 
-				operation = "|" 
-			end
-
-			print("PARENT:"..tostring(parent))
-
-			if(type(value) == "table") then
-				if(k == "comment") then k = "#" end
-				show_list(operation, k, value, indent)
-			else
-				print(operation .. " " .. string.rep(" ", indent) .. k .. "=" .. tostring(value))
-			end
-		end
-::continue::
-	end
-end
-
-function new_show_field(delta, master, indent, k)
+--
+-- Disply and individual field with the appropriate disposition, we use
+-- a separate function to cover lists
+--
+function show_field(delta, master, indent, k)
 	local value = delta[k] or (delta._fields_deleted and delta._fields_deleted[k])
 	if(value) then
+		local operation = " "
+
+		if(delta._added) then operation = "+"
+		elseif(delta._fields_added and delta._fields_added[k]) then operation = "+"
+		elseif(delta._fields_deleted and delta._fields_deleted[k]) then operation = "-"
+		elseif(delta._fields_changed and delta._fields_changed[k]) then operation = "|" end
+
 		if(type(value) == "table") then
-			show_list("X", k, value, indent)
+			show_list(operation, k, value, indent)
 		else
-			print("X" .. " " .. string.rep(" ", indent) .. k .. "=" .. tostring(value))
+			print(operation .. " " .. string.rep(" ", indent) .. k .. " " .. tostring(value))
 		end
 	end
 end
 
 --
--- Recursive function to show a delta config. We highlight anything that needs to
--- be added or removed (including changes to lists)
+-- For a given node, start by showing comments, then the fields. Then recurse
+-- into the containers.
 --
-function new_show_config(delta, master, indent, parent)
+function show_config(delta, master, indent, parent, p_op)
 	indent = indent or 0
+	p_op = p_op or " "
 
 	if(delta["comment"] or (delta._fields_deleted and delta._fields_deleted["comment"])) then
-		new_show_field(delta, master, indent, "comment")
+		show_field(delta, master, indent, "comment")
 	end
 	if(has_non_comment_fields(delta, master)) then
-		local id = indent
-		if(parent) then print("X" .. " " .. string.rep(" ", indent) .. parent .. " {") end
-		for k in each_field(delta, master) do
-			if(k ~= "comment") then
-				new_show_field(delta, master, indent, k)
-			end
+		local item_indent = indent
+		if(parent) then 
+			print(p_op .. " " .. string.rep(" ", indent) .. parent .. " (settings) {") 
+			item_indent = item_indent + 4
 		end
-		if(parent) then print("X" .. " " .. string.rep(" ", indent) .. "}") end
+		for k in each_field(delta, master) do
+			if(k ~= "comment") then show_field(delta, master, item_indent, k) end
+		end
+		if(parent) then print(p_op .. " " .. string.rep(" ", indent) .. "}") end
 	end
 
---	show_fields(delta, master, indent, parent)
 	for k in each_container(delta, master) do
 		local dc = delta[k]
 		local mc = master[k] or master["*"]
 		local label = (parent and (parent .. " " .. k)) or k
-
-		if(mc._show_together) then
-			new_show_config(dc, mc, indent, k)
-		else	
-			print("X" .. " " .. string.rep(" ", indent) .. label .. " {")
-			new_show_config(dc, mc, indent+4)
-			print("X" .. " " .. string.rep(" ", indent) .. "}")
-		end
-	end
-end
-
-function show_config(delta, master, indent, parent)
-	indent = indent or 0
-
-	for _, k in ipairs(list_children(delta, master)) do
-		local dc = delta[k]
-		local mc = master[k] or master["*"]
-		if(not mc) then 
-			print("WARNING: no master definition for: "..k)
-			goto continue
-		end
 
 		-- work out how we need to be shown, we'll ignore change for containers
 		local operation = " "
 		if(dc._added) then operation = "+"
 		elseif(dc._deleted) then operation = "-" end
 
-		local label = (parent and (parent.." "..k)) or k
-
-		-- show the header (but only if we don't have wildcard children
-		if(mc["*"]) then
-			show_config(dc, mc, indent, k)
-		else
+		if(mc._show_together) then
+			show_config(dc, mc, indent, k, operation)
+		else	
 			print(operation .. " " .. string.rep(" ", indent) .. label .. " {")
-			if(has_children(dc)) then
-				show_config(dc, mc, indent+4, child_label)
-			else
-				show_fields(dc, mc, indent+4)
-			end
+			show_config(dc, mc, indent+4)
 			print(operation .. " " .. string.rep(" ", indent) .. "}")
 		end
-::continue::
+	end
+end
+function dump_config(delta, master, indent)
+	indent = indent or 0
+	for k in each_field(delta, master) do
+		show_field(delta, master, indent, k)
+	end
+	for k in each_container(delta, master) do
+		local dc = delta[k]
+		local mc = master[k] or master["*"]
+
+		print("  " .. string.rep(" ", indent) .. k .. " {")
+		dump_config(dc, mc, indent+4)
+		print("  " .. string.rep(" ", indent) .. "}")
 	end
 end
 
@@ -983,7 +951,7 @@ function each_field(dc, mc)
 		while(1) do
 			i = i + 1
 			if(not order[i]) then return nil end
-			if(dc[order[i]]) then return order[i] end
+			if(dc[order[i]] and not mc[order[i]]._has_children) then return order[i] end
 		end
 	end
 end
@@ -997,12 +965,16 @@ function each_container(dc, mc)
 		for k, _ in pairs(dc) do
 			if(string.sub(k, 1, 1) ~= "_" and not mc[k]) then table.insert(wild, k) end
 		end
+		table.sort(wild)
 	end
 
 	-- build the full order
-	for _, k in ipairs(mc.order) do
-		if(k == "*") then append_list(clist, wild)
-		else table.insert(clist, k) end
+	for _, k in ipairs(mc._order) do
+		if(k == "*") then 
+			append_list(clist, wild) 
+		elseif(mc[k] and mc[k]._has_children) then
+			table.insert(clist, k)
+		end
 	end
 
 	-- now prepare the function...
@@ -1014,23 +986,6 @@ function each_container(dc, mc)
 		end
 	end
 end	
-
-function each_container(dc, mc)
-	local last = nil
-	return function()
-		while(1) do
-			last = next(dc, last)						-- get next item
-			if(not last) then return nil end			-- if nil then end
-			if(string.sub(last, 1, 1) ~= "-") then		-- for non directives
-				local m = mc[last] or mc["*"]			-- get the right mc node
-				if(m._has_children) then 
-					return last 
-				end
-			end
-		end
-	end
-end
-
 --
 -- Some boolean checks for having containers or fields
 --
@@ -1068,6 +1023,11 @@ CONFIG.delta = {
 		["two"] = {
 			value = 99
 		},
+		["xxx"] = {
+			aaa = 30,
+			bbb = 20,
+			ccc = 10
+		},
 		lee = 88
 	}
 }
@@ -1085,8 +1045,13 @@ for k in each_field(d, m) do
 	print("Field: " .. k)
 end
 
+alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "speed=99" })
+--dump(CONFIG.delta)
+
 print("HF: "..tostring(new_has_fields(d, m)))
-new_show_config(CONFIG.delta, CONFIG.master)
+show_config(CONFIG.delta, CONFIG.master)
+print("=================")
+dump_config(CONFIG.delta, CONFIG.master)
 
 -- TODO TODO TODO TODO
 --
@@ -1101,7 +1066,6 @@ new_show_config(CONFIG.delta, CONFIG.master)
 --alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "secondaries"})
 --alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", nil)
 
--- alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "secondaries-=2.2.2.2/8",
 --					"comment=", "comment=hello there", "comment=you" })
 -- alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "address=1.2.3.3/1", "speed=40", "duplex=auto" })
 -- alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/1", { "address=5.2.3.3/1", "speed=40", "duplex=auto" })
