@@ -258,6 +258,7 @@ function show_file(operation, ftype, k, value, indent, dump)
 				lc = lc + 1
 				if(lc >= 4) then
 					print(operation .. " " .. string.rep(" ", indent+4) .. "... <more>")
+					break
 				end
 			end
 		end
@@ -358,6 +359,7 @@ function read_config(filename, master, file)
 		file = io.open(filename)
 		-- TODO: handle errors
 	end
+
 	while(true) do
 		line = file:read();
 		if(not line) then break end
@@ -377,7 +379,6 @@ function read_config(filename, master, file)
 			-- we have a section start, but we only fill in the return
 			-- if we had an equivalent master to follow
 			--
-			print("mc="..tostring(mc).." sec="..sec)
 			ac = read_config(nil, mc, file)
 			if(mc) then rc[sec] = ac end
 		else
@@ -397,6 +398,7 @@ function read_config(filename, master, file)
 					table.insert(rc[key], value)
 				elseif(is_file) then
 					local data = ""
+
 					while(1) do
 						local line = file:read()
 						if(mc._type == "file/binary") then
@@ -407,12 +409,13 @@ function read_config(filename, master, file)
 								break;
 							end
 						elseif(mc._type == "file/text") then
-							if(line == "<eof>") then
+							if(string.match(line, "^%s+<eof>")) then
 								rc[key] = data
 								break;
 							end
 							line = string.gsub(line, "^%s+|", "")
-							data = data .. line .. "\n"
+							if(#data > 0) then data = data .. "\n" end
+							data = data .. line
 						end
 					end
 				elseif(mc) then
@@ -1059,12 +1062,12 @@ end
 
 prepare_master(CONFIG.master)
 
-CONFIG.delta = copy_table(CONFIG.active)
---CONFIG.active = read_config("sample", CONFIG.master)
---show_config(CONFIG.active, CONFIG.master)
-alter_config(CONFIG.delta, CONFIG.master, "/fred", { "lee=tttt" })
+--CONFIG.delta = copy_table(CONFIG.active)
+CONFIG.active = read_config("sample", CONFIG.master)
+show_config(CONFIG.active, CONFIG.master)
+--alter_config(CONFIG.delta, CONFIG.master, "/fred", { "lee=tttt" })
 --commit_delta(CONFIG.delta, CONFIG.master, CONFIG.active, CONFIG)
-dump_config(CONFIG.delta, CONFIG.master)
+--dump_config(CONFIG.active, CONFIG.master)
 
 
 --alter_config(CONFIG.delta, CONFIG.master, "/fred", { "comment=one", "comment=two", "comment=three" } )
