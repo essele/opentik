@@ -50,8 +50,9 @@ CONFIG.master = {
 	},
 	["fred"] = {
 		_show_together = 1,
+		_function = function() return true end,
 		["*"] = {
-			_function = function() return true end,
+--			_function = function() return true end,
 			["value"] = {
 				_type = "blah"
 			}
@@ -142,52 +143,6 @@ function copy_table(t)
 	end
 	return rc
 end
-
-CONFIG.delta = copy_table(CONFIG.active)
-CONFIG.delta["dns"]._changed = 1
-CONFIG.delta["dns"]._fields_changed =  { ["resolvers"] = 1 }
-CONFIG.delta["dns"].resolvers = { "8.8.8.8", "1.1.2.1", "2.2.2.2" }
-CONFIG.delta["dns"].resolvers._original_list = CONFIG.active["dns"].resolvers
-CONFIG.delta["dns"].resolvers._items_deleted = { "8.8.4.4" }
-CONFIG.delta["dns"].resolvers._items_added = { "1.1.1.1", "2.2.2.2" }
-
-CONFIG.delta.test = {}
-CONFIG.delta.test._added = 1
-CONFIG.delta.test.test2 = {}
-CONFIG.delta.test.test2._added = 1
-CONFIG.delta.test.test2.test3 = {}
-CONFIG.delta.test.test2.test3._added = 1
-CONFIG.delta.test.test2.test3.test4 = {}
-CONFIG.delta.test.test2.test3.test4._added = 1
-CONFIG.delta.test.test2.test3.test4.value = 77
-
-CONFIG.delta.fred = {}
-CONFIG.delta.fred._added = 1
-CONFIG.delta.fred.one = {}
-CONFIG.delta.fred.one._added = 1
-CONFIG.delta.fred.one.value = "blah"
-
-CONFIG.delta.interface._changed = 1
-CONFIG.delta.interface.ethernet._changed = 1
-CONFIG.delta.interface.ethernet["0"]._changed = 1
-CONFIG.delta.interface.ethernet["0"]._fields_added = { ["mtu"] = 1, ["duplex"] = 1, ["speed"] = 1 }
-CONFIG.delta.interface.ethernet["0"]._fields_deleted = { ["grog"] = 1 }
-CONFIG.delta.interface.ethernet["0"].mtu = 1500
-CONFIG.delta.interface.ethernet["0"].duplex = "auto"
-CONFIG.delta.interface.ethernet["0"].speed = "auto"
-
-CONFIG.delta.interface.ethernet["1"] = {}
-CONFIG.delta.interface.ethernet["1"]._added = 1
-CONFIG.delta.interface.ethernet["1"].name = "eth1"
-CONFIG.delta.interface.ethernet["1"].address = "192.168.1.1/24"
-CONFIG.delta.interface.ethernet["1"].comment = { "two", "line comment",
-										_added = 1
-									}
-
-tmp = CONFIG.delta.interface.ethernet["2"]
-CONFIG.delta.interface.ethernet["2"] = {}
-CONFIG.delta.interface.ethernet["2"]._deleted = tmp
-
 
 
 function dump(t, i)
@@ -451,7 +406,45 @@ end
 -- Before executing the function we need to make sure any dependencies are
 -- met
 --
-function apply_delta(delta, active, master, originals, completed, ppath)
+
+
+function apply_delta(delta, master, active, path, completed)
+	-- internal vars
+	path = path or ""
+	completed = completed or {}
+
+	-- keep track of whether we did anything
+	local did_work = false
+
+	-- if nothing changed we do nothing
+	if(not delta._added and not delta._deleted and not delta._changed) then return false end
+
+	-- if we have a function the we need to take action (even if no_exec)
+	if(master._function) then
+		if(not delta._no_exec) then
+			-- check dependencies
+			-- run the function
+			print("Would Execute: " .. path)
+		end
+		return true
+	end
+
+	-- if we didn't have a function the we need to recurse through containers
+	for k, dc, mc in each_container(delta, master) do
+		-- make sure we have the active structure
+		active[k] = active[k] or {}
+		if(apply_delta(dc, mc, active[k], path .. "/" .. k)) then 
+			delta[k] = clean_config(delta[k])
+			active[k] = delta[k]
+			did_work = true 
+		end
+	end
+	set_node_status(delta, master)
+	return did_work
+end
+
+
+function Xapply_delta(delta, active, master, originals, completed, ppath)
 	-- setup some default for our internal vars
 	ppath = ppath or ""
 
@@ -695,7 +688,6 @@ function alter_config(delta, master, path, fields)
 			print("list operation on non-list: " .. k)
 			return false
 		end
-		print("OD: k="..k.." op="..tostring(op).." v="..tostring(op))
 		if(v or op ~= "-") then only_delete=false end
 		-- todo: validate if not del
 	end
@@ -736,38 +728,42 @@ end
 -- Look at all the fields and containers and work out whether we should
 -- be flagged as "added", "deleted", "changed", or not flagged at all
 --
+-- If the only changes are _no_exec ones then we set _no_exec
+--
 function set_node_status(dc, mc)
 	-- we will flag certain stuff
 	local adds = 0
 	local dels = 0
 	local changes = 0
 	local static = 0
-
-	-- TODO: if the field change is only a comment then we should add the
-	-- _only_comment directive so that we don't call the function
-	--
-	-- the logic is that we only have one change (add/delete/change) and its
-	-- a comment ... not sure how best to detect that!
-	--
-	-- if a[k] or d[k] or c[k] then add k to a list
-	-- if the list is 1 item and only comment then...
+	local no_exec = 0
 
 	-- first check for field related stuff
 	for k in each_field(dc, mc) do
-		if(dc._fields_added and dc._fields_added[k]) then adds = 1
-		elseif(dc._fields_deleted and dc._fields_deleted[k]) then dels = 1
-		elseif(dc._fields_changed and dc._fields_changed[k]) then changes = 1
-		else static = 1 end
+		local chg = true
+
+		if(dc._fields_added and dc._fields_added[k]) then adds = adds + 1
+		elseif(dc._fields_deleted and dc._fields_deleted[k]) then dels = dels + 1
+		elseif(dc._fields_changed and dc._fields_changed[k]) then changes = changes + 1
+		else static = static + 1 chg = false end
+
+		-- if we have a change, see if we are a no_exec one...
+		if(chg and mc[k]._no_exec) then no_exec = no_exec + 1 end
 	end
 
 	-- now process each of the containers we have
 	for k in each_container(dc, mc) do
-		if(dc[k]._added) then adds = 1
-		elseif(dc[k]._deleted) then dels = 1 
-		elseif(dc[k]._changed) then changes = 1
-		else static = 1 end
+		local chg = true
+
+		if(dc[k]._added) then adds = adds + 1
+		elseif(dc[k]._deleted) then dels = dels + 1 
+		elseif(dc[k]._changed) then changes = changes + 1
+		else static = static + 1 chg = false end
 
 		if(not next(dc[k])) then dc[k] = nil end
+
+		-- if we have a change, see if we are a no_exec one...
+		if(chg and dc[k]._no_exec) then no_exec = no_exec + 1 end
 	end
 
 	-- set the final status
@@ -776,6 +772,8 @@ function set_node_status(dc, mc)
 	elseif(dels + changes + static == 0) then dc._added = 1
 	elseif(adds + changes + static == 0) then dc._deleted = 1
 	elseif(adds + dels + changes > 0) then dc._changed = 1 end
+
+	dc._no_exec = ((no_exec > 0 and no_exec == adds+dels+changes) and 1) or nil
 end	
 
 function alter_list(dc, k, value, list_op)
@@ -966,7 +964,9 @@ function prepare_master(master)
 
 	master._has_children = has_children
 	master._order = sorted
-	master.comment = { _type = "list/comment" }
+	if(not master.comment) then
+		master.comment = { _type = "list/comment", _no_exec = 1 }
+	end
 end
 
 --
@@ -1036,7 +1036,7 @@ function has_non_comment_fields(dc, mc)
 	return f and true
 end
 
-
+--[[
 CONFIG.delta = {
 	interface = {
 		ethernet = {
@@ -1063,24 +1063,34 @@ CONFIG.delta = {
 		lee = 88
 	}
 }
+]]--
 
 -- TODO: populate comment field in master!
 prepare_master(CONFIG.master)
+CONFIG.delta = copy_table(CONFIG.active)
 
-
-alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "secondaries=99" })
-alter_config(CONFIG.delta, CONFIG.master, "/fred/two", nil)
-alter_config(CONFIG.delta, CONFIG.master, "/fred/two", { "value=22345" })
-alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/2", { "address=1.2.3.4/3" })
+alter_config(CONFIG.delta, CONFIG.master, "/fred", { "comment=one", "comment=two", "comment=three" } )
+alter_config(CONFIG.delta, CONFIG.master, "/fred/one", { "value=44" })
+alter_config(CONFIG.delta, CONFIG.master, "/fred/two", { "value=99" })
+alter_config(CONFIG.delta, CONFIG.master, "/fred/xxx", { "aaa=30", "bbb=20", "ccc=10" })
+alter_config(CONFIG.delta, CONFIG.master, "/fred", { "lee=88" })
+alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "secondaries=1.2.3.5",
+										"secondaries=2.3.4.5" })
+show_config(CONFIG.delta, CONFIG.master)
+print("=================")
+apply_delta(CONFIG.delta, CONFIG.master, CONFIG.active)
+--dump(CONFIG.delta)
+show_config(CONFIG.active, CONFIG.master)
+--revert_config(CONFIG.delta, CONFIG.master, "/fred/two")
+--alter_config(CONFIG.delta, CONFIG.master, "/fred/two", { "value=22345" })
+--alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/2", { "address=1.2.3.4/3" })
 print("X")
 --alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/2", { "address" })
-dump(CONFIG.delta)
-print("=================")
+--dump(CONFIG.delta)
 --dump(CONFIG.master)
-revert_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0")
+--revert_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0")
 
 --dump(CONFIG.delta)
-show_config(CONFIG.delta, CONFIG.master)
 print("=================")
 --dump_config(CONFIG.delta, CONFIG.master)
 
