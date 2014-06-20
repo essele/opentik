@@ -65,6 +65,7 @@ CONFIG.master["interface"]["ethernet"] = {
 	--
 	-- main section for instances of ethernet interfaces...
 	--
+	_show_together = 1,
 	["*"] = {
 		_function = cf_ethernet,
 		_listmode = "system",
