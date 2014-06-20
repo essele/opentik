@@ -501,10 +501,10 @@ end
 -- Keep running through the apply_delta function until we don't
 -- do any work, then we should be finished.
 --
-function commit_delta(delta, active, master, originals)
+function commit_delta(delta, master, active, originals)
 	while(1) do
 		print("RUN")
-		local did_work, err = apply_delta(delta, active, master, originals)
+		local did_work, err = apply_delta(delta, master, active, originals)
 		if(did_work == nil) then
 			print("ERROR: " .. err)
 			break
@@ -513,9 +513,10 @@ function commit_delta(delta, active, master, originals)
 			print("NO WORK")
 			break
 		end
-		for k,v in pairs(delta) do
-			-- TODO: check for changes
-			print("Still left: " .. k)
+		for k in each_container(delta, master) do
+			if(delta[k]._added or delta[k]._deleted or delta[k].changed) then
+				print("Still change to do for: " .. k)
+			end
 		end
 	end
 end
@@ -1062,23 +1063,23 @@ end
 
 prepare_master(CONFIG.master)
 
---CONFIG.delta = copy_table(CONFIG.active)
-CONFIG.active = read_config("sample", CONFIG.master)
-show_config(CONFIG.active, CONFIG.master)
---alter_config(CONFIG.delta, CONFIG.master, "/fred", { "lee=tttt" })
+CONFIG.delta = copy_table(CONFIG.active)
+--CONFIG.active = read_config("sample", CONFIG.master)
+--show_config(CONFIG.active, CONFIG.master)
+alter_config(CONFIG.delta, CONFIG.master, "/fred", { "lee=tttt" })
 --commit_delta(CONFIG.delta, CONFIG.master, CONFIG.active, CONFIG)
 --dump_config(CONFIG.active, CONFIG.master)
 
 
---alter_config(CONFIG.delta, CONFIG.master, "/fred", { "comment=one", "comment=two", "comment=three" } )
---alter_config(CONFIG.delta, CONFIG.master, "/fred/one", { "value=44" })
---alter_config(CONFIG.delta, CONFIG.master, "/fred/xxx", { "aaa=30", "bbb=20", "ccc=10" })
+alter_config(CONFIG.delta, CONFIG.master, "/fred", { "comment=one", "comment=two", "comment=three" } )
+alter_config(CONFIG.delta, CONFIG.master, "/fred/one", { "value=44" })
+alter_config(CONFIG.delta, CONFIG.master, "/fred/xxx", { "aaa=30", "bbb=20", "ccc=10" })
 --alter_config(CONFIG.delta, CONFIG.master, "/fred", { "lee=88" })
---alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "secondaries=1.2.3.5",
---										"secondaries=2.3.4.5" })
+alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "secondaries=1.2.3.5",
+										"secondaries=2.3.4.5" })
 print("=================")
---commit_delta(CONFIG.delta, CONFIG.master, CONFIG.active, CONFIG)
---dump(CONFIG.delta)
+commit_delta(CONFIG.delta, CONFIG.master, CONFIG.active, CONFIG)
+dump(CONFIG.delta)
 --show_config(CONFIG.active, CONFIG.master)
 --dump_config(CONFIG.active, CONFIG.master)
 --
