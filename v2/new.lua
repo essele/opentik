@@ -21,6 +21,7 @@ package.path = "./lib/?.lua"
 package.cpath = "./lib/?.so"
 
 require("lfs")
+require("base64")
 --require("config_io")			-- allow reading and writing of configs
 
 --
@@ -64,7 +65,7 @@ CONFIG.master = {
 			["ccc"] = { _type = "blah" },
 		},
 		["lee"] = {
-			_type = "blah"
+			_type = "file/binary"
 		}
 	},
 	["test"] = {
@@ -231,6 +232,25 @@ function show_list(parent_op, item, list, indent)
 end
 
 --
+-- Handle the display of both binary and text files
+--
+function show_file(operation, ftype, k, value, indent, dump)
+	ftype = string.sub(ftype, 6)
+	local binary = enc(value)
+
+	print(operation .. " " .. string.rep(" ", indent) .. k .. " <" .. ftype .. ">")
+	for i=1, #binary, 60 do
+		print(operation .. " " .. string.rep(" ", indent+4) .. string.sub(binary, i, i+60))
+		if(not dump) then
+			if(i >= 60*4) then
+				print(operation .. " " .. string.rep(" ", indent+4) .. ".... (total " .. #binary .. " bytes)")
+				break
+			end
+		end
+	end
+end
+
+--
 -- Disply and individual field with the appropriate disposition, we use
 -- a separate function to cover lists
 --
@@ -248,6 +268,8 @@ function show_field(delta, master, indent, k, dump)
 
 		if(type(value) == "table") then
 			show_list(operation, k, value, indent)
+		elseif(string.sub(master[k]._type, 1, 5) == "file/") then
+			show_file(operation, master[k]._type, k, value, indent, dump)
 		else
 			print(operation .. " " .. string.rep(" ", indent) .. k .. " " .. tostring(value))
 		end
@@ -305,6 +327,73 @@ function dump_config(delta, master, indent)
 		print("  " .. string.rep(" ", indent) .. "}")
 	end
 end
+
+--
+-- Read in a file in "config" format and convert it back into a
+-- table
+--
+function read_config(filename, master, file)
+	local rc = {}
+	local line
+	--
+	-- we are going to recurse, so if the file isn't open then
+	-- we need to open it here
+	--
+	if(not file) then
+		file = io.open(filename)
+		-- TODO: handle errors
+	end
+	while(true) do
+		line = file:read();
+		if(not line) then break end
+
+		-- skip empty lines
+		if(string.match(line, "^%s*$")) then goto continue end
+
+		-- if we get a close bracket then we need to return, so exit the loop
+		if(string.match(line, "}$")) then break end
+
+		-- look for a section start
+		local sec = string.match(line, "^%s*([^%s]+)%s+{$")
+		if(sec) then
+			local mc = master and (master[sec] or master["*"])
+			local ac
+			--
+			-- we have a section start, but we only fill in the return
+			-- if we had an equivalent master to follow
+			--
+			print("mc="..tostring(mc).." sec="..sec)
+			ac = read_config(nil, mc, file)
+			if(mc) then rc[sec] = ac end
+		else
+			--
+			-- this should be a field
+			--
+			local key, value = string.match(line, "^%s*([^%s]+)%s+(.*)$")
+			if(not key) then
+				print("FIELD ERROR: " .. line)
+			else
+				local mc = master and master[key]
+				local is_list = mc and mc._type and string.sub(mc._type, 1, 5) == "list/"
+
+				if(is_list) then
+					if(not rc[key]) then rc[key] = {} end
+					table.insert(rc[key], value)
+				elseif(mc) then
+					rc[key] = value
+				end
+			end	
+		end
+::continue::
+	end
+
+	--
+	-- close the file, if we are the top level
+	--
+	if(filename) then file:close() end
+	return rc
+end
+
 
 --
 -- Cleaning a config is simply removing any of the directives in a recursive 
@@ -487,8 +576,6 @@ function delete_config(delta, master, path)
 	if(path) then parent_status_update(delta, master, path) end
 end
 
-
-
 --
 -- revert a given section of config by making sure everything is back to
 -- normal.
@@ -571,6 +658,18 @@ function alter_config(delta, master, path, fields)
 			print("list operation on non-list: " .. k)
 			return false
 		end
+
+		-- if we are a file type then we just check we can open
+		-- it here, so we know it will work later...
+		if(string.sub(mc[k]._type, 1, 5) == "file/" and v) then
+			local file = io.open(v)
+			if(not file) then
+				print("invalid file: " .. v)
+				return false
+			end
+			file:close()
+		end
+
 		if(v or op ~= "-") then only_delete=false end
 		-- todo: validate if not del
 	end
@@ -755,6 +854,14 @@ function alter_node(dc, mc, fields)
 			alter_list(dc, k, v, list_op)
 			goto continue
 		end
+
+		-- if we are a file then we need to load it in, we should
+		-- have checked this will work earlier, so no err checking needed
+		if(string.sub(mc[k]._type, 1, 5) == "file/") then
+			local file = io.open(v)
+			v = file:read("*a")
+			file:close()
+		end
 	
 		-- handle field deletion ... it is hasn't been added, and wasn't deleted
 		-- before then mark it as deleted.
@@ -913,41 +1020,18 @@ function has_non_comment_fields(dc, mc)
 	return f and true
 end
 
---[[
-CONFIG.delta = {
-	interface = {
-		ethernet = {
-			["0"] = { 
-				address = "1.2.3.3/1",
-				speed = 40,
-				secondaries = { "1.1.1.1/16", "2.2.2.2/8", "3.3.3.3/24" }
-			}
-		}
-	},
-	fred = {
-		comment = { "one", "two", "three" },
-		["one"] = {
-			value = 44
-		},
-		["two"] = {
-			value = 99
-		},
-		["xxx"] = {
-			aaa = 30,
-			bbb = 20,
-			ccc = 10
-		},
-		lee = 88
-	}
-}
-]]--
 
 prepare_master(CONFIG.master)
+
+CONFIG.delta = read_config("sample", CONFIG.master)
+alter_config(CONFIG.delta, CONFIG.master, "/fred", { "lee=tttt" })
+show_config(CONFIG.delta, CONFIG.master)
+
+--[[
 CONFIG.delta = copy_table(CONFIG.active)
 
 alter_config(CONFIG.delta, CONFIG.master, "/fred", { "comment=one", "comment=two", "comment=three" } )
 alter_config(CONFIG.delta, CONFIG.master, "/fred/one", { "value=44" })
-alter_config(CONFIG.delta, CONFIG.master, "/fred/two", { "value=99" })
 alter_config(CONFIG.delta, CONFIG.master, "/fred/xxx", { "aaa=30", "bbb=20", "ccc=10" })
 alter_config(CONFIG.delta, CONFIG.master, "/fred", { "lee=88" })
 alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "secondaries=1.2.3.5",
@@ -956,11 +1040,14 @@ show_config(CONFIG.delta, CONFIG.master)
 print("=================")
 commit_delta(CONFIG.delta, CONFIG.master, CONFIG.active, CONFIG)
 --dump(CONFIG.delta)
-show_config(CONFIG.active, CONFIG.master)
+--show_config(CONFIG.active, CONFIG.master)
+dump_config(CONFIG.active, CONFIG.master)
+]]--
+
 --revert_config(CONFIG.delta, CONFIG.master, "/fred/two")
+--
 --alter_config(CONFIG.delta, CONFIG.master, "/fred/two", { "value=22345" })
 --alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/2", { "address=1.2.3.4/3" })
-print("X")
 --alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/2", { "address" })
 --dump(CONFIG.delta)
 --dump(CONFIG.master)
