@@ -32,20 +32,28 @@ require("base64")
 --
 CONFIG = {}
 CONFIG.master = {
-	["dns"] = {
-		_depends = { "/interface", "/interface/ethernet/0" },
+	["dnsmasq"] = {
 		_function = function() return true end,
-		_partners = { "dhcp" },
-		["resolvers"] = {
-			_type = "list/ipv4",
-			_syntax = "syntax_ipv4",
+		_depends = { "/interface", "/interface/ethernet/0" },
+		_hidden = 1,
+		_links = {
+			["dns"] = "/fred/new/dns",
+			["dhcp"] = "/test/test2/test3/dhcp" 
+		},
+		["dns"] = {
+			["resolvers"] = {
+				_type = "list/ipv4",
+				_syntax = "syntax_ipv4",
+			},
+			["set"] = {
+				_type = "blah"
+			}
+		},
+		["dhcp"] = {
+			["lee"] = { _type = "blarg" },
 		},
 	},
-	["dhcp"] = {
-		_depends = { "interface/pppoe" },
-		_function = function() return true end,
-		_partners = { "dns" }
-	},
+
 	["tinc"] = {
 		_depends = { "interface", "dns" }
 	},
@@ -81,6 +89,9 @@ CONFIG.master = {
 		}
 	}
 }
+
+--CONFIG.master["fred"]["new"]["dns"] = CONFIG.master["dnsmasq"]["dns"]
+--CONFIG.master["test"]["test2"]["test3"]["dhcp"] = CONFIG.master["dnsmasq"]["dhcp"]
 
 --
 -- We look at all of the module files and load each one which should
@@ -118,9 +129,16 @@ end
 --
 
 CONFIG.active = {
-		["dns"] = {
-			resolvers = { "8.8.8.8", "8.8.4.4" }
+		["fred"] = {
+			["new"] = {
+				["dns"] = {
+					resolvers = { "r1", "r2" }
+				}
+			}
 		},
+--		["dns"] = {
+--			resolvers = { "8.8.8.8", "8.8.4.4" }
+--		},
 		["interface"] = {
 			["ethernet"] = {
 				["0"] = {
@@ -525,7 +543,10 @@ end
 -- for a given node, return the master and delta nodes (if they exist)
 --
 function get_node(path, m, d)
+	print("GN: " .. path)
     for key in string.gmatch(path, "([^/]+)") do
+		print("GN:   (key="..key..")" .. " m="..tostring(m))
+		if(m) then dump(m) end
         m = m and (m[key] or m["*"])
         d = d and d[key]
     end
@@ -579,7 +600,7 @@ function delete_config(delta, master, path)
 	if(path) then
 		mc, dc = get_node(path, master, delta)
 		if(not mc or not dc) then
-			print("invalid path: " .. path)
+			print("Xinvalid path: " .. path)
 			return false
 		end
 	end
@@ -675,7 +696,7 @@ function alter_config(delta, master, path, fields)
 
 	-- check the node is valid
 	local mc, dc = get_node(path, master, delta)
-	if(not mc or not mc._has_children) then
+	if(not mc) then
 		print("invalid path: " .. path)
 		return false
 	end
@@ -732,6 +753,17 @@ function alter_config(delta, master, path, fields)
 
 ::cleanup::
 	parent_status_update(delta, master, path)
+
+	-- if we are a link then we need to make sure we reference the
+	-- real_path location
+	if(mc._real_path and mc._real_path ~= path) then
+		print("OUR PATH: "..path.." REAL: "..mc._real_path)
+		local parent, node = string.match(mc._real_path, "^(.*)/([^/]+)$")
+		local d = make_path(delta, parent)
+		d[node] = dc
+
+		parent_status_update(delta, master, mc._real_path)
+	end
 end
 
 --
@@ -782,6 +814,7 @@ function set_node_status(dc, mc)
 		elseif(dc[k]._changed) then changes = changes + 1
 		else static = static + 1 chg = false end
 
+		-- clear out any empty ones
 		if(not next(dc[k])) then dc[k] = nil end
 
 		-- if we have a change, see if we are a no_exec one...
@@ -973,7 +1006,12 @@ end
 -- containers so we can use the 'each_field', 'each_container'
 -- functions
 --
-function prepare_master(master)
+function prepare_master(master, gmaster, path)
+	-- internal arguments
+	gmaster = gmaster or master				-- keep our top level reference
+	path = path or ""						-- so we know where we are
+
+	-- tracking variables
 	local has_children = nil
 	local sorted = master._order or {}
 	local unsorted = {}
@@ -984,7 +1022,7 @@ function prepare_master(master)
 		local is_list = master[k]._type and string.sub(master[k]._type, 1, 5) == "list/"
 
 		if(not is_list) then
-			prepare_master(master[k])
+			prepare_master(master[k], gmaster, path .. "/" .. k)
 			has_children = 1
 		end
 		if(not is_in_list(sorted, k)) then table.insert(unsorted, k) end
@@ -997,6 +1035,24 @@ function prepare_master(master)
 	if(not master.comment) then
 		master.comment = { _type = "list/comment", _no_exec = 1 }
 	end
+
+	-- do we present any of our children to other places?
+	for k, dest in pairs(master._links or {}) do
+		local parent, node = string.match(dest, "^(.*)/([^/]+)$")
+		local m = make_path(gmaster, parent)
+		m[node] = master[k]
+		master[k]._real_path = path .. "/" .. k
+		-- (re)run prepare on the new link so we get the order right etc
+		prepare_master(m, gmaster)
+	end
+end
+
+function make_path(t, path)
+	for key in string.gmatch(path, "([^/]+)") do
+		if(not t[key]) then t[key] = {} end
+		t = t[key]
+	end
+	return t
 end
 
 --
@@ -1062,25 +1118,28 @@ end
 
 
 prepare_master(CONFIG.master)
+dump(CONFIG.master)
 
 CONFIG.delta = copy_table(CONFIG.active)
 --CONFIG.active = read_config("sample", CONFIG.master)
 --show_config(CONFIG.active, CONFIG.master)
-alter_config(CONFIG.delta, CONFIG.master, "/fred", { "lee=tttt" })
+--alter_config(CONFIG.delta, CONFIG.master, "/fred", { "lee=tttt" })
 --commit_delta(CONFIG.delta, CONFIG.master, CONFIG.active, CONFIG)
 --dump_config(CONFIG.active, CONFIG.master)
 
 
-alter_config(CONFIG.delta, CONFIG.master, "/fred", { "comment=one", "comment=two", "comment=three" } )
-alter_config(CONFIG.delta, CONFIG.master, "/fred/one", { "value=44" })
-alter_config(CONFIG.delta, CONFIG.master, "/fred/xxx", { "aaa=30", "bbb=20", "ccc=10" })
---alter_config(CONFIG.delta, CONFIG.master, "/fred", { "lee=88" })
-alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "secondaries=1.2.3.5",
-										"secondaries=2.3.4.5" })
+--alter_config(CONFIG.delta, CONFIG.master, "/fred", { "comment=one", "comment=two", "comment=three" } )
+--alter_config(CONFIG.delta, CONFIG.master, "/fred/one", { "value=44" })
+--alter_config(CONFIG.delta, CONFIG.master, "/fred/xxx", { "aaa=30", "bbb=20", "ccc=10" })
+--alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "secondaries=1.2.3.5",
+--										"secondaries=2.3.4.5" })
+--alter_config(CONFIG.delta, CONFIG.master, "/fred/new/dns", { "set=55" })
+alter_config(CONFIG.delta, CONFIG.master, "/fred/new/dns", { "resolvers=r4" })
 print("=================")
-commit_delta(CONFIG.delta, CONFIG.master, CONFIG.active, CONFIG)
 dump(CONFIG.delta)
---show_config(CONFIG.active, CONFIG.master)
+--commit_delta(CONFIG.delta, CONFIG.master, CONFIG.active, CONFIG)
+--dump(CONFIG.delta)
+--show_config(CONFIG.delta, CONFIG.master)
 --dump_config(CONFIG.active, CONFIG.master)
 --
 --revert_config(CONFIG.delta, CONFIG.master, "/fred/two")
