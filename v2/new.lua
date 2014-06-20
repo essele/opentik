@@ -51,6 +51,7 @@ CONFIG.master = {
 	["fred"] = {
 		_show_together = 1,
 		_function = function() return true end,
+		_depends = { "/interface/ethernet" },
 		["*"] = {
 --			_function = function() return true end,
 			["value"] = {
@@ -158,14 +159,6 @@ end
 --
 -- if we have any non-list tables then we have children
 --
-function has_children(node)
-	for k, v in pairs(node) do
-		if(string.sub(k, 1, 1) ~= "_") then
-			if(type(v) == "table" and not v[1]) then return true end
-		end
-	end
-	return false
-end
 function is_in_list(list, item)
 	for _,v in ipairs(list) do if(v == item) then return true end end
 	return false
@@ -213,78 +206,6 @@ function remove_directives(t)
 	for k,_ in pairs(t) do
 		if(string.sub(k, 1, 1) == "_") then t[k] = nil end
 	end
-end
-
---
--- Return all the fields from the master definition in the supplied order
--- or alphabetically. We also add comment on the front if it's not included
---
-function list_all_fields(master)
-	local rc = {}
-	if(master._order) then 
-		rc = master._order 
-	else
-		for k in non_directive_fields(master) do table.insert(rc, k) end
-		table.sort(rc)
-	end
-	if(not is_in_list(rc, "comment")) then
-		table.insert(rc, 1, "comment")
-	end
-	return rc
-end
-
---
--- list any non directive children, sorted alphabetically
---
-function children_alphabetically(delta)
-	local rc = {}
-	for k in non_directive_fields(delta) do table.insert(rc, k) end
-	table.sort(rc)
-	return rc
-end
-
---
--- pull out any children from the delta that are a wildcard match, we will
--- use this in list_children to cover the ["*"] entry in _order
---
-function list_all_wildcards(delta, master)
-	local rc = {}
-	if(not master["*"]) then return rc end
-	for k,_ in pairs(delta) do
-		if(not master[k]) then table.insert(rc, k) end
-	end
-	table.sort(rc)
-	return rc
-end
-
---
--- Return the list of our children in the defined order or alphabetically.
--- We also add comment on the front if it's not included.
---
-function list_children(delta, master)
-	local kids = children_alphabetically(delta)
-	local order = master._order or {}
-	local rc = {}
-
-	-- put comment at the front if we have one
-	if(is_in_list(kids, "comment")) then
-		table.insert(rc, "comment")
-		remove_from_list(kids, "comment")
-	end
-
-	-- start with the ones from order, cater for "*"
-	for _,k in ipairs(order) do
-		if(is_in_list(kids, k)) then
-			table.insert(rc, k)
-			remove_from_list(kids, k)
-		elseif(k == "*") then
-			append_list(rc, list_all_wildcards(delta, master))
-		end
-	end
-
-	-- now anything left over...
-	append_list(rc, kids)
-	return rc
 end
 
 --
@@ -406,12 +327,9 @@ end
 -- Before executing the function we need to make sure any dependencies are
 -- met
 --
-
-
-function apply_delta(delta, master, active, path, completed)
+function apply_delta(delta, master, active, originals, path)
 	-- internal vars
 	path = path or ""
-	completed = completed or {}
 
 	-- keep track of whether we did anything
 	local did_work = false
@@ -423,6 +341,14 @@ function apply_delta(delta, master, active, path, completed)
 	if(master._function) then
 		if(not delta._no_exec) then
 			-- check dependencies
+			for _, d in ipairs(master._depends or {}) do
+				if(has_outstanding_changes(d, originals.master, originals.delta)) then
+					print("Dependency not met for: "..d)
+					return false
+				end
+			end
+			
+			-- check dependencies
 			-- run the function
 			print("Would Execute: " .. path)
 		end
@@ -433,7 +359,7 @@ function apply_delta(delta, master, active, path, completed)
 	for k, dc, mc in each_container(delta, master) do
 		-- make sure we have the active structure
 		active[k] = active[k] or {}
-		if(apply_delta(dc, mc, active[k], path .. "/" .. k)) then 
+		if(apply_delta(dc, mc, active[k], originals, path .. "/" .. k)) then 
 			delta[k] = clean_config(delta[k])
 			active[k] = delta[k]
 			did_work = true 
@@ -443,77 +369,25 @@ function apply_delta(delta, master, active, path, completed)
 	return did_work
 end
 
-
-function Xapply_delta(delta, active, master, originals, completed, ppath)
-	-- setup some default for our internal vars
-	ppath = ppath or ""
-
-	-- flag to show whether we actualy did anything or not
-	local did_work = false
-
-	for _, k in ipairs(list_children(delta, master)) do
-		local path = ppath .. "/" .. k
-		local dc = delta[k]
-		local mc = master[k] or master["*"]
-		if(not mc) then 
-			print("WARNING: no master definition for: "..k)
-			goto continue
-		end
-		if(not active[k]) then active[k] = {} end
-		local ac = active[k]
-
-		-- we only care about stuff that has changed in some way
-		if(dc._added or dc._deleted or dc._changed) then
-			-- TODO: partner dependencies?
-			if(mc._depends) then
-				for _,d in ipairs(mc._depends) do
-					if(not completed[d]) then
-						print("Dependency not complete: " .. d)
-						goto continue
-					end
-				end
-			end
-			
-			if(mc._function) then
-				print("Would execute")
-				did_work = true
-				-- TODO: return nil,err on failure
-			elseif(has_children(dc)) then
-				local dw, err = apply_delta(dc, ac, mc, originals, completed, path)
-				if(dw == nil) then return nil, err end
-				if(dw) then did_work = true end
-			end
-			-- move the config across, and clean
-			delta[k] = clean_config(delta[k])
-			active[k] = delta[k]
-		end
-		completed[path] = 1
-		print("Done: " .. path)
-::continue::
-	end
-	return did_work
-end
-
 --
 -- Keep running through the apply_delta function until we don't
 -- do any work, then we should be finished.
 --
 function commit_delta(delta, active, master, originals)
-	local completed = {}
 	while(1) do
 		print("RUN")
-		local dw, err = apply_delta(delta, active, master, originals, completed)
-		if(dw == nil) then
+		local did_work, err = apply_delta(delta, active, master, originals)
+		if(did_work == nil) then
 			print("ERROR: " .. err)
 			break
 		end
-		if(not dw) then
+		if(not did_work) then
 			print("NO WORK")
 			break
 		end
 		for k,v in pairs(delta) do
 			-- TODO: check for changes
-			print("Srill left: " .. k)
+			print("Still left: " .. k)
 		end
 	end
 end
@@ -527,6 +401,15 @@ function get_node(path, m, d)
         d = d and d[key]
     end
     return m, d
+end
+
+--
+-- For a given node, see if we have outstanding changes
+--
+function has_outstanding_changes(path, m, d)
+	local mc, dc = get_node(path, m, d)
+	if(mc and dc and (dc._added or dc._deleted or dc._changed)) then return true end
+	return false
 end
 
 --
@@ -1021,12 +904,6 @@ end
 --
 -- Some boolean checks for having containers or fields
 --
-function new_has_children(dc, mc)
-	return each_container(dc, mc)() and true
-end
-function has_fields(dc, mc)
-	return each_field(dc, mc)() and true
-end
 function has_non_comment_fields(dc, mc)
 	local fx = each_field(dc, mc)
 	local f = fx()
@@ -1065,7 +942,6 @@ CONFIG.delta = {
 }
 ]]--
 
--- TODO: populate comment field in master!
 prepare_master(CONFIG.master)
 CONFIG.delta = copy_table(CONFIG.active)
 
@@ -1078,7 +954,7 @@ alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "secondarie
 										"secondaries=2.3.4.5" })
 show_config(CONFIG.delta, CONFIG.master)
 print("=================")
-apply_delta(CONFIG.delta, CONFIG.master, CONFIG.active)
+commit_delta(CONFIG.delta, CONFIG.master, CONFIG.active, CONFIG)
 --dump(CONFIG.delta)
 show_config(CONFIG.active, CONFIG.master)
 --revert_config(CONFIG.delta, CONFIG.master, "/fred/two")
@@ -1098,45 +974,7 @@ print("=================")
 --
 -- Still to do:
 -- 1. think about partners
--- 2. deal with comments properly
 -- 3. load/save config
 -- 4. handle "file"/"data" types
 --
-
-
---alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "secondaries"})
---alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", nil)
-
---					"comment=", "comment=hello there", "comment=you" })
--- alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "address=1.2.3.3/1", "speed=40", "duplex=auto" })
--- alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/1", { "address=5.2.3.3/1", "speed=40", "duplex=auto" })
--- dump(CONFIG.delta)
-
---alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "secondaries", "secondaries+=2.2.2.2/8"})
---dump(CONFIG.delta)
---show_config(CONFIG.delta, CONFIG.master)
---print("--------------")
---alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "comment", "comment=fred" })
---print("--------------")
---revert_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0")
---dump(CONFIG.delta)
---show_config(CONFIG.delta, CONFIG.master)
---alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0",
---			{ address="1.6.6.4/8", speed=88 } )
---dump(CONFIG.delta)
-print("--------------")
---alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0",
---			{ address=false, speed=40 } )
-
-
---show_config(CONFIG.delta, CONFIG.active, CONFIG.master)
---commit_delta(CONFIG.delta, CONFIG.active, CONFIG.master, CONFIG)
---dump(CONFIG.active)
-
---[[
-dump(CONFIG.delta)
-print("---------------------------")
-CONFIG.delta = clean_config(CONFIG.delta)
-dump(CONFIG.delta)
-]]--
 
