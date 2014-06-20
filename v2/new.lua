@@ -65,7 +65,7 @@ CONFIG.master = {
 			["ccc"] = { _type = "blah" },
 		},
 		["lee"] = {
-			_type = "file/binary"
+			_type = "file/text"
 		}
 	},
 	["test"] = {
@@ -236,17 +236,32 @@ end
 --
 function show_file(operation, ftype, k, value, indent, dump)
 	ftype = string.sub(ftype, 6)
-	local binary = enc(value)
 
 	print(operation .. " " .. string.rep(" ", indent) .. k .. " <" .. ftype .. ">")
-	for i=1, #binary, 60 do
-		print(operation .. " " .. string.rep(" ", indent+4) .. string.sub(binary, i, i+60))
-		if(not dump) then
-			if(i >= 60*4) then
-				print(operation .. " " .. string.rep(" ", indent+4) .. ".... (total " .. #binary .. " bytes)")
-				break
+	if(ftype == "binary") then
+		local binary = enc(value)
+
+		for i=1, #binary, 76 do
+			print(operation .. " " .. string.rep(" ", indent+4) .. string.sub(binary, i, i+75))
+			if(not dump) then
+				if(i >= 77*4) then
+					print(operation .. " " .. string.rep(" ", indent+4) .. "... (total " .. #binary .. " bytes)")
+					break
+				end
 			end
 		end
+	elseif(ftype == "text") then
+		local lc = 0
+		for line in string.gmatch(value, "([^\n]*)\n?") do
+			print(operation .. " " .. string.rep(" ", indent+4) .. "|" .. line)
+			if(not dump) then
+				lc = lc + 1
+				if(lc >= 4) then
+					print(operation .. " " .. string.rep(" ", indent+4) .. "... <more>")
+				end
+			end
+		end
+		if(dump) then print(operation .. " " .. string.rep(" ", indent+4) .. "<eof>") end
 	end
 end
 
@@ -367,7 +382,7 @@ function read_config(filename, master, file)
 			if(mc) then rc[sec] = ac end
 		else
 			--
-			-- this should be a field
+			-- this should be a field, but could include a file type
 			--
 			local key, value = string.match(line, "^%s*([^%s]+)%s+(.*)$")
 			if(not key) then
@@ -375,10 +390,31 @@ function read_config(filename, master, file)
 			else
 				local mc = master and master[key]
 				local is_list = mc and mc._type and string.sub(mc._type, 1, 5) == "list/"
+				local is_file = mc and mc._type and string.sub(mc._type, 1, 5) == "file/"
 
 				if(is_list) then
 					if(not rc[key]) then rc[key] = {} end
 					table.insert(rc[key], value)
+				elseif(is_file) then
+					local data = ""
+					while(1) do
+						local line = file:read()
+						if(mc._type == "file/binary") then
+							line = string.gsub(line, "^%s+", "")
+							data = data .. line
+							if(string.match(line, "==$")) then
+								rc[key] = dec(data)
+								break;
+							end
+						elseif(mc._type == "file/text") then
+							if(line == "<eof>") then
+								rc[key] = data
+								break;
+							end
+							line = string.gsub(line, "^%s+|", "")
+							data = data .. line .. "\n"
+						end
+					end
 				elseif(mc) then
 					rc[key] = value
 				end
@@ -1023,27 +1059,26 @@ end
 
 prepare_master(CONFIG.master)
 
-CONFIG.delta = read_config("sample", CONFIG.master)
-alter_config(CONFIG.delta, CONFIG.master, "/fred", { "lee=tttt" })
-show_config(CONFIG.delta, CONFIG.master)
-
---[[
 CONFIG.delta = copy_table(CONFIG.active)
+--CONFIG.active = read_config("sample", CONFIG.master)
+--show_config(CONFIG.active, CONFIG.master)
+alter_config(CONFIG.delta, CONFIG.master, "/fred", { "lee=tttt" })
+--commit_delta(CONFIG.delta, CONFIG.master, CONFIG.active, CONFIG)
+dump_config(CONFIG.delta, CONFIG.master)
 
-alter_config(CONFIG.delta, CONFIG.master, "/fred", { "comment=one", "comment=two", "comment=three" } )
-alter_config(CONFIG.delta, CONFIG.master, "/fred/one", { "value=44" })
-alter_config(CONFIG.delta, CONFIG.master, "/fred/xxx", { "aaa=30", "bbb=20", "ccc=10" })
-alter_config(CONFIG.delta, CONFIG.master, "/fred", { "lee=88" })
-alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "secondaries=1.2.3.5",
-										"secondaries=2.3.4.5" })
-show_config(CONFIG.delta, CONFIG.master)
+
+--alter_config(CONFIG.delta, CONFIG.master, "/fred", { "comment=one", "comment=two", "comment=three" } )
+--alter_config(CONFIG.delta, CONFIG.master, "/fred/one", { "value=44" })
+--alter_config(CONFIG.delta, CONFIG.master, "/fred/xxx", { "aaa=30", "bbb=20", "ccc=10" })
+--alter_config(CONFIG.delta, CONFIG.master, "/fred", { "lee=88" })
+--alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "secondaries=1.2.3.5",
+--										"secondaries=2.3.4.5" })
 print("=================")
-commit_delta(CONFIG.delta, CONFIG.master, CONFIG.active, CONFIG)
+--commit_delta(CONFIG.delta, CONFIG.master, CONFIG.active, CONFIG)
 --dump(CONFIG.delta)
 --show_config(CONFIG.active, CONFIG.master)
-dump_config(CONFIG.active, CONFIG.master)
-]]--
-
+--dump_config(CONFIG.active, CONFIG.master)
+--
 --revert_config(CONFIG.delta, CONFIG.master, "/fred/two")
 --
 --alter_config(CONFIG.delta, CONFIG.master, "/fred/two", { "value=22345" })
