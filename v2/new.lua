@@ -63,19 +63,7 @@ CONFIG.master = {
 			}
 		},
 		["new"] = {
-			["dns"] = {
-				_link = "/dnsmasq/dns"
--- prepare master will create (in master)
--- _link_mc = mc (of real place)
---
--- delta will be empty to start with.
--- if we add a field, then we create a stub link (dc) [with _added]
--- if we delete, then it gets removed [flaged with _removed]
--- if we change, then we update the stub as well
--- when we execute??
---
---
-			}
+			["dns"] = { _link = "/dnsmasq/dns" }
 		},
 		["xxx"] = {
 			["aaa"] = { _type = "blah" },
@@ -406,6 +394,7 @@ function read_config(filename, master, file)
 		if(sec) then
 			local mc = master and (master[sec] or master["*"])
 			local ac
+
 			--
 			-- we have a section start, but we only fill in the return
 			-- if we had an equivalent master to follow
@@ -460,6 +449,8 @@ function read_config(filename, master, file)
 	--
 	-- close the file, if we are the top level
 	--
+	--TODO: run through and handle links?
+	--		if we find a link, then build the dest and link the table over?
 	if(filename) then file:close() end
 	return rc
 end
@@ -495,7 +486,6 @@ function apply_delta(delta, master, active, originals, path)
 			-- run the function
 			print("Would Execute: " .. path)
 		end
-		print("XX1")
 		migrate_delta_to_active(delta, master, active, true)
 		return true
 	end
@@ -512,12 +502,15 @@ function apply_delta(delta, master, active, originals, path)
 
 	-- if we didn't have a function then we just migrate any changed fields over
 	-- there shouldn't really be any other than comments (no recurse)
-
-	print("XX2")
 	migrate_delta_to_active(delta, master, active, false)
 	return did_work
 end
 
+
+--
+-- copy a table recursively but don't take any of the directives, if we
+-- end up empty then return nil
+--
 function clean_copy(delta)
 	local rc = {}
 
@@ -562,17 +555,16 @@ function migrate_delta_to_active(delta, master, active, recurse)
 
 	if(recurse) then
 		for k, dc, mc in each_container(delta, master) do
-			-- if we are deleted in the delta then we are gon...
+			-- if we are deleted in the delta then we are gone...
 			if(dc._deleted) then
+				delta[k] = nil
 				active[k] = nil
-				goto continue
-			end
-
-			-- make the active structure if needed
-			if(not active[k]) then active[k] = {} end
+			else
+				-- make the active structure if needed
+				if(not active[k]) then active[k] = {} end
 			
-			migrate_delta_to_active(dc, mc, active[k], recurse)
-::continue::
+				migrate_delta_to_active(dc, mc, active[k], recurse)
+			end
 		end
 	end
 	set_node_status(delta, master)
@@ -667,6 +659,8 @@ function delete_config(delta, master, path)
 		end
 	end
 
+	-- TODO: handle links in the same way as alter_config (here and at the end)
+
 	-- start by recursing into the containers
 	for k in each_container(dc, mc) do
 		delete_config(dc[k], mc[k])
@@ -717,6 +711,8 @@ function revert_config(delta, master, path)
 			return false
 		end
 	end
+
+	-- TODO: handle links (see alter/delete)
 
 	for k in each_container(dc, mc) do
 		revert_config(dc[k], mc[k])
@@ -1093,11 +1089,11 @@ function prepare_master(master, gmaster, path)
 
 	if(not is_in_list(sorted, "comment")) then table.insert(sorted, 1, "comment") end
 
-	for k in non_directive_fields(master) do
-		local is_list = master[k]._type and string.sub(master[k]._type, 1, 5) == "list/"
+	for k, mc in non_directive_fields(master) do
+		local is_list = mc._type and string.sub(mc._type, 1, 5) == "list/"
 
 		if(not is_list) then
-			prepare_master(master[k], gmaster, path .. "/" .. k)
+			prepare_master(mc, gmaster, path .. "/" .. k)
 			has_children = 1
 		end
 		if(not is_in_list(sorted, k)) then table.insert(unsorted, k) end
