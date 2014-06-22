@@ -36,10 +36,6 @@ CONFIG.master = {
 		_function = function() return true end,
 		_depends = { "/interface", "/interface/ethernet/0" },
 		_hidden = 1,
-		_links = {
-			["dns"] = "/fred/new/dns",
-			["dhcp"] = "/test/test2/test3/dhcp" 
-		},
 		["dns"] = {
 			["resolvers"] = {
 				_type = "list/ipv4",
@@ -53,7 +49,6 @@ CONFIG.master = {
 			["lee"] = { _type = "blarg" },
 		},
 	},
-
 	["tinc"] = {
 		_depends = { "interface", "dns" }
 	},
@@ -65,6 +60,21 @@ CONFIG.master = {
 --			_function = function() return true end,
 			["value"] = {
 				_type = "blah"
+			}
+		},
+		["new"] = {
+			["dns"] = {
+				_link = "/dnsmasq/dns"
+-- prepare master will create (in master)
+-- _link_mc = mc (of real place)
+--
+-- delta will be empty to start with.
+-- if we add a field, then we create a stub link (dc) [with _added]
+-- if we delete, then it gets removed [flaged with _removed]
+-- if we change, then we update the stub as well
+-- when we execute??
+--
+--
 			}
 		},
 		["xxx"] = {
@@ -79,6 +89,7 @@ CONFIG.master = {
 	["test"] = {
 		["test2"] = {
 			["test3"] = {
+				["dhcp"] = { _link = "/dnsmasq/dhcp" },
 				["test4"] = {
 					_function = function() return true end,
 					["value"] = {
@@ -129,11 +140,9 @@ end
 --
 
 CONFIG.active = {
-		["fred"] = {
-			["new"] = {
-				["dns"] = {
-					resolvers = { "r1", "r2" }
-				}
+		["dnsmasq"] = {
+			["dns"] = {
+				resolvers = { "r1", "r2" }
 			}
 		},
 --		["dns"] = {
@@ -213,7 +222,7 @@ function non_directive_fields(t)
 		while(1) do
 			last = next(t, last)
 			if(not last) then return nil end
-			if(string.sub(last, 1, 1) ~= "_") then return last end
+			if(string.sub(last, 1, 1) ~= "_") then return last, t[last] end
 		end
 	end
 end
@@ -335,6 +344,10 @@ function show_config(delta, master, indent, parent, p_op)
 
 	for k, dc, mc in each_container(delta, master) do
 		local label = (parent and (parent .. " " .. k)) or k
+		if(mc._link) then
+			print("mc._link="..mc._link)
+			mc = mc._link_mc
+		end
 
 		-- work out how we need to be shown, we'll ignore change for containers
 		local operation = " "
@@ -451,21 +464,6 @@ function read_config(filename, master, file)
 	return rc
 end
 
-
---
--- Cleaning a config is simply removing any of the directives in a recursive 
--- fashion. If we end up removing everything then we return nil so the result
--- should be applied to the table (i.e. fred = clean_config(fred))
---
-function clean_config(delta)
-	for k,v in pairs(delta) do
-		if(string.sub(k, 1, 1) == "_") then delta[k] = nil
-		elseif(type(v) == "table") then delta[k] = clean_config(delta[k]) end
-	end
-	if(not next(delta)) then return nil end
-	return delta
-end
-
 --
 -- Applying a delta is walking through the delta tree (ignoring any children
 -- that have not changed), and then executing any functions that we find
@@ -494,26 +492,92 @@ function apply_delta(delta, master, active, originals, path)
 				end
 			end
 			
-			-- check dependencies
 			-- run the function
 			print("Would Execute: " .. path)
 		end
+		print("XX1")
+		migrate_delta_to_active(delta, master, active, true)
 		return true
 	end
 
-	-- if we didn't have a function the we need to recurse through containers
+	-- if we didn't have a function then we need to run over the containers
+	-- processing them
 	for k, dc, mc in each_container(delta, master) do
 		-- make sure we have the active structure
 		active[k] = active[k] or {}
-		if(apply_delta(dc, mc, active[k], originals, path .. "/" .. k)) then 
-			delta[k] = clean_config(delta[k])
+		if(apply_delta(dc, mc, active[k], originals, path .. "/" .. k)) then
+			did_work = true
+		end
+	end
+
+	-- if we didn't have a function then we just migrate any changed fields over
+	-- there shouldn't really be any other than comments (no recurse)
+
+	print("XX2")
+	migrate_delta_to_active(delta, master, active, false)
+	return did_work
+end
+
+function clean_copy(delta)
+	local rc = {}
+
+	for k,v in non_directive_fields(delta) do
+		if(type(v) == "table") then rc[k] = clean_copy(v)
+		else rc[k] = v end
+	end
+	if(not next(rc)) then return nil end
+	return rc
+end
+
+-- Go through each field and set it appropriately in the active config, if we are recursing
+-- the we also handle each child (unless it's a link, in which case we leave it alone)
+function migrate_delta_to_active(delta, master, active, recurse)
+
+	-- if we are a link then we don't do anything here, it will happen
+	-- on the other end
+	if(master._link) then return end
+
+	for k in each_field(delta, master) do
+		-- if we are not in the delta then we are deleted
+		if(not delta[k]) then
+			active[k] = nil
+			goto continue
+		end
+
+		-- create the active structure if needed
+		if(not active[k]) then active[k] = {} end
+
+		-- if we are a table then we will clean and copy
+		if(type(delta[k]) == "table") then
+			active[k] = clean_copy(delta[k])
+			delta[k] = clean_copy(delta[k])
+		else
 			active[k] = delta[k]
-			did_work = true 
+		end
+::continue::
+	end
+	delta._fields_added = nil
+	delta._fields_deleted = nil
+	delta._fields_changed = nil
+
+	if(recurse) then
+		for k, dc, mc in each_container(delta, master) do
+			-- if we are deleted in the delta then we are gon...
+			if(dc._deleted) then
+				active[k] = nil
+				goto continue
+			end
+
+			-- make the active structure if needed
+			if(not active[k]) then active[k] = {} end
+			
+			migrate_delta_to_active(dc, mc, active[k], recurse)
+::continue::
 		end
 	end
 	set_node_status(delta, master)
-	return did_work
 end
+
 
 --
 -- Keep running through the apply_delta function until we don't
@@ -521,6 +585,7 @@ end
 --
 function commit_delta(delta, master, active, originals)
 	while(1) do
+		dump(delta)
 		print("RUN")
 		local did_work, err = apply_delta(delta, master, active, originals)
 		if(did_work == nil) then
@@ -543,10 +608,7 @@ end
 -- for a given node, return the master and delta nodes (if they exist)
 --
 function get_node(path, m, d)
-	print("GN: " .. path)
     for key in string.gmatch(path, "([^/]+)") do
-		print("GN:   (key="..key..")" .. " m="..tostring(m))
-		if(m) then dump(m) end
         m = m and (m[key] or m["*"])
         d = d and d[key]
     end
@@ -693,12 +755,24 @@ end
 --
 function alter_config(delta, master, path, fields)
 	local only_delete = true
+	local orig_path
 
 	-- check the node is valid
 	local mc, dc = get_node(path, master, delta)
 	if(not mc) then
 		print("invalid path: " .. path)
 		return false
+	end
+
+	-- if we are a link then we need to adjust our mc,dc
+	if(mc._link) then
+		orig_path = path
+		path = mc._link
+		mc, dc = get_node(path, master, delta)
+		if(not mc) then
+			print("invalid link path: " .. path)
+			return false
+		end
 	end
 
 	-- if we are a delete operation then we need to recurse
@@ -756,13 +830,14 @@ function alter_config(delta, master, path, fields)
 
 	-- if we are a link then we need to make sure we reference the
 	-- real_path location
-	if(mc._real_path and mc._real_path ~= path) then
-		print("OUR PATH: "..path.." REAL: "..mc._real_path)
-		local parent, node = string.match(mc._real_path, "^(.*)/([^/]+)$")
+	if(orig_path) then
+		-- make orig path
+		-- set the dc to the one we've just set
+		-- update our patent status
+		local parent, node = string.match(orig_path, "^(.*)/([^/]+)$")
 		local d = make_path(delta, parent)
 		d[node] = dc
-
-		parent_status_update(delta, master, mc._real_path)
+		parent_status_update(delta, master, orig_path)
 	end
 end
 
@@ -1036,14 +1111,11 @@ function prepare_master(master, gmaster, path)
 		master.comment = { _type = "list/comment", _no_exec = 1 }
 	end
 
-	-- do we present any of our children to other places?
-	for k, dest in pairs(master._links or {}) do
-		local parent, node = string.match(dest, "^(.*)/([^/]+)$")
-		local m = make_path(gmaster, parent)
-		m[node] = master[k]
-		master[k]._real_path = path .. "/" .. k
-		-- (re)run prepare on the new link so we get the order right etc
-		prepare_master(m, gmaster)
+	-- if we are a link to somewhere else then fill in the _link_mc
+	if(master._link) then
+		print("PREP MASTER: LINK to " .. master._link)
+		master._has_children = 1
+		master._link_mc = get_node(master._link, gmaster)
 	end
 end
 
@@ -1118,7 +1190,7 @@ end
 
 
 prepare_master(CONFIG.master)
-dump(CONFIG.master)
+--dump(CONFIG.master)
 
 CONFIG.delta = copy_table(CONFIG.active)
 --CONFIG.active = read_config("sample", CONFIG.master)
@@ -1134,12 +1206,18 @@ CONFIG.delta = copy_table(CONFIG.active)
 --alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "secondaries=1.2.3.5",
 --										"secondaries=2.3.4.5" })
 --alter_config(CONFIG.delta, CONFIG.master, "/fred/new/dns", { "set=55" })
-alter_config(CONFIG.delta, CONFIG.master, "/fred/new/dns", { "resolvers=r4" })
-print("=================")
+print("1")
+alter_config(CONFIG.delta, CONFIG.master, "/fred/new/dns", { "comment=r4" })
+print("2")
+--alter_config(CONFIG.delta, CONFIG.master, "/test/test2/test3/dhcp", { "lee=abcdabcd" })
+print("3")
 dump(CONFIG.delta)
---commit_delta(CONFIG.delta, CONFIG.master, CONFIG.active, CONFIG)
+
+print("=================")
+commit_delta(CONFIG.delta, CONFIG.master, CONFIG.active, CONFIG)
+
 --dump(CONFIG.delta)
---show_config(CONFIG.delta, CONFIG.master)
+show_config(CONFIG.delta, CONFIG.master)
 --dump_config(CONFIG.active, CONFIG.master)
 --
 --revert_config(CONFIG.delta, CONFIG.master, "/fred/two")
@@ -1155,11 +1233,4 @@ dump(CONFIG.delta)
 print("=================")
 --dump_config(CONFIG.delta, CONFIG.master)
 
--- TODO TODO TODO TODO
---
--- Still to do:
--- 1. think about partners
--- 3. load/save config
--- 4. handle "file"/"data" types
---
 
