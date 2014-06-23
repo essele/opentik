@@ -341,7 +341,7 @@ function show_config(delta, master, indent, parent, p_op)
 
 		if(mc._show_together) then
 			show_config(dc, mc, indent, k, operation)
-		elseif(not mc._hiddenX) then
+		elseif(not mc._hidden) then
 			print(operation .. " " .. string.rep(" ", indent) .. label .. " {")
 			show_config(dc, mc, indent+4)
 			print(operation .. " " .. string.rep(" ", indent) .. "}")
@@ -355,7 +355,7 @@ function dump_config(delta, master, indent)
 	end
 	for k, dc, mc in each_container(delta, master) do
 		if(mc._link) then mc = mc._link_mc end
-		if(not mc._hiddenX) then
+		if(not mc._hidden) then
 			print("  " .. string.rep(" ", indent) .. k .. " {")
 			dump_config(dc, mc, indent+4)
 			print("  " .. string.rep(" ", indent) .. "}")
@@ -394,6 +394,9 @@ function read_config(filename, master, file)
 		if(sec) then
 			local mc = master and (master[sec] or master["*"])
 			local ac
+
+			-- handle links by sorting the mc
+			if(mc._link) then mc = mc._link_mc end
 
 			--
 			-- we have a section start, but we only fill in the return
@@ -466,7 +469,8 @@ function recreate_links(active, master, gactive)
 	for k, ac, mc in each_container(active, master) do
 		print("RCL: " .. k)
 		if(mc._link) then
-			link_node(active, ac, mc._link)
+			print("Link node called for: "..mc._link)
+			link_node(gactive, ac, mc._link)
 		else
 			recreate_links(ac, mc, gactive)
 		end
@@ -480,7 +484,7 @@ end
 -- Before executing the function we need to make sure any dependencies are
 -- met
 --
-function apply_delta(delta, master, active, originals, path)
+function apply_delta(delta, master, active, gconfig, path)
 	-- internal vars
 	path = path or ""
 
@@ -496,7 +500,7 @@ function apply_delta(delta, master, active, originals, path)
 			-- check dependencies
 			for _, d in ipairs(master._depends or {}) do
 				print("Checking dependency: " .. d)
-				if(has_outstanding_changes(d, originals.master, originals.delta)) then
+				if(has_outstanding_changes(d, gconfig.master, gconfig.delta)) then
 					print("Dependency not met for: "..d)
 					return false
 				end
@@ -505,7 +509,7 @@ function apply_delta(delta, master, active, originals, path)
 			-- run the function
 			print("Would Execute: " .. path)
 		end
-		migrate_delta_to_active(delta, master, active, true)
+		migrate_delta_to_active(delta, master, active, gconfig, true)
 		return true
 	end
 
@@ -514,14 +518,14 @@ function apply_delta(delta, master, active, originals, path)
 	for k, dc, mc in each_container(delta, master) do
 		-- make sure we have the active structure
 		active[k] = active[k] or {}
-		if(apply_delta(dc, mc, active[k], originals, path .. "/" .. k)) then
+		if(apply_delta(dc, mc, active[k], gconfig, path .. "/" .. k)) then
 			did_work = true
 		end
 	end
 
 	-- if we didn't have a function then we just migrate any changed fields over
 	-- there shouldn't really be any other than comments (no recurse)
-	migrate_delta_to_active(delta, master, active, false)
+	migrate_delta_to_active(delta, master, active, gconfig, false)
 	return did_work
 end
 
@@ -543,7 +547,7 @@ end
 
 -- Go through each field and set it appropriately in the active config, if we are recursing
 -- the we also handle each child (unless it's a link, in which case we leave it alone)
-function migrate_delta_to_active(delta, master, active, recurse)
+function migrate_delta_to_active(delta, master, active, gconfig, recurse)
 
 	-- if we are a link then we don't do anything here, it will happen
 	-- on the other end
@@ -582,21 +586,17 @@ function migrate_delta_to_active(delta, master, active, recurse)
 				-- make the active structure if needed
 				if(not active[k]) then active[k] = {} end
 			
-				migrate_delta_to_active(dc, mc, active[k], recurse)
+				migrate_delta_to_active(dc, mc, active[k], gconfig, recurse)
 			end
 		end
 	end
 
 	set_node_status(delta, master)
 
-	-- TODO: if we were the original part of the link then we probably
-	-- 		 need to link ourselves back to the pointer bit.
-
-	-- TODO TODO TODO
+	-- if we were the original part of the link then we need to link ourselves back 
+	-- to the pointer bit.
 	if(master._link_dests) then
-		for _, k in ipairs(master._link_dests) do
-			print("WOULD LINK TO: " .. k)
-		end
+		for _, k in ipairs(master._link_dests) do link_node(gconfig.active, active, k) end
 	end
 end
 
@@ -605,10 +605,10 @@ end
 -- Keep running through the apply_delta function until we don't
 -- do any work, then we should be finished.
 --
-function commit_delta(delta, master, active, originals)
+function commit_delta(delta, master, active, gconfig)
 	while(1) do
 		print("RUN")
-		local did_work, err = apply_delta(delta, master, active, originals)
+		local did_work, err = apply_delta(delta, master, active, gconfig)
 		if(did_work == nil) then
 			print("ERROR: " .. err)
 			break
@@ -1237,8 +1237,8 @@ end
 prepare_master(CONFIG.master)
 --dump(CONFIG.master)
 
-CONFIG.delta = copy_table(CONFIG.active)
---CONFIG.active = read_config("sample", CONFIG.master)
+--CONFIG.delta = copy_table(CONFIG.active)
+CONFIG.active = read_config("sample", CONFIG.master)
 --show_config(CONFIG.active, CONFIG.master)
 --alter_config(CONFIG.delta, CONFIG.master, "/fred", { "lee=tttt" })
 --commit_delta(CONFIG.delta, CONFIG.master, CONFIG.active, CONFIG)
@@ -1251,18 +1251,18 @@ CONFIG.delta = copy_table(CONFIG.active)
 --alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "secondaries=1.2.3.5",
 --										"secondaries=2.3.4.5" })
 --alter_config(CONFIG.delta, CONFIG.master, "/fred/new/dns", { "set=55" })
-alter_config(CONFIG.delta, CONFIG.master, "/fred/new/dns", { "resolvers=r4" })
-alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/2", { "address=1.2.3.4/3" })
+--alter_config(CONFIG.delta, CONFIG.master, "/fred/new/dns", { "resolvers=r4" })
+--alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/2", { "address=1.2.3.4/3" })
 --alter_config(CONFIG.delta, CONFIG.master, "/test/test2/test3/dhcp", { "lee=abcdabcd" })
 --dump(CONFIG.delta)
 
 print("=================")
-commit_delta(CONFIG.delta, CONFIG.master, CONFIG.active, CONFIG)
+--commit_delta(CONFIG.delta, CONFIG.master, CONFIG.active, CONFIG)
 
 --dump(CONFIG.delta)
 --show_config(CONFIG.delta, CONFIG.master)
-dump(CONFIG.active)
 dump_config(CONFIG.active, CONFIG.master)
+dump(CONFIG.active)
 --
 --revert_config(CONFIG.delta, CONFIG.master, "/fred/two")
 --
