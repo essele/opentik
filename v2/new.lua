@@ -34,7 +34,7 @@ CONFIG = {}
 CONFIG.master = {
 	["dnsmasq"] = {
 		_function = function() return true end,
-		_depends = { "/interface", "/interface/ethernet/0" },
+		_depends = { "/interface/ethernet/0" },
 		_hidden = 1,
 		["dns"] = {
 			["resolvers"] = {
@@ -54,8 +54,8 @@ CONFIG.master = {
 	},
 	["fred"] = {
 		_show_together = 1,
-		_function = function() return true end,
-		_depends = { "/interface/ethernet" },
+--		_function = function() return true end,
+--		_depends = { "/interface/ethernet" },
 		["*"] = {
 --			_function = function() return true end,
 			["value"] = {
@@ -332,10 +332,7 @@ function show_config(delta, master, indent, parent, p_op)
 
 	for k, dc, mc in each_container(delta, master) do
 		local label = (parent and (parent .. " " .. k)) or k
-		if(mc._link) then
-			print("mc._link="..mc._link)
-			mc = mc._link_mc
-		end
+		if(mc._link) then mc = mc._link_mc end
 
 		-- work out how we need to be shown, we'll ignore change for containers
 		local operation = " "
@@ -344,7 +341,7 @@ function show_config(delta, master, indent, parent, p_op)
 
 		if(mc._show_together) then
 			show_config(dc, mc, indent, k, operation)
-		else	
+		elseif(not mc._hiddenX) then
 			print(operation .. " " .. string.rep(" ", indent) .. label .. " {")
 			show_config(dc, mc, indent+4)
 			print(operation .. " " .. string.rep(" ", indent) .. "}")
@@ -357,9 +354,12 @@ function dump_config(delta, master, indent)
 		show_field(delta, master, indent, k, true)
 	end
 	for k, dc, mc in each_container(delta, master) do
-		print("  " .. string.rep(" ", indent) .. k .. " {")
-		dump_config(dc, mc, indent+4)
-		print("  " .. string.rep(" ", indent) .. "}")
+		if(mc._link) then mc = mc._link_mc end
+		if(not mc._hiddenX) then
+			print("  " .. string.rep(" ", indent) .. k .. " {")
+			dump_config(dc, mc, indent+4)
+			print("  " .. string.rep(" ", indent) .. "}")
+		end
 	end
 end
 
@@ -451,8 +451,26 @@ function read_config(filename, master, file)
 	--
 	--TODO: run through and handle links?
 	--		if we find a link, then build the dest and link the table over?
-	if(filename) then file:close() end
+	if(filename) then 
+		file:close() 
+		recreate_links(rc, master)
+	end
 	return rc
+end
+
+function recreate_links(active, master, gactive)
+	-- store a ref to the top level active structure
+	gactive = gactive or active
+
+	-- go through each container
+	for k, ac, mc in each_container(active, master) do
+		print("RCL: " .. k)
+		if(mc._link) then
+			link_node(active, ac, mc._link)
+		else
+			recreate_links(ac, mc, gactive)
+		end
+	end
 end
 
 --
@@ -477,6 +495,7 @@ function apply_delta(delta, master, active, originals, path)
 		if(not delta._no_exec) then
 			-- check dependencies
 			for _, d in ipairs(master._depends or {}) do
+				print("Checking dependency: " .. d)
 				if(has_outstanding_changes(d, originals.master, originals.delta)) then
 					print("Dependency not met for: "..d)
 					return false
@@ -567,7 +586,18 @@ function migrate_delta_to_active(delta, master, active, recurse)
 			end
 		end
 	end
+
 	set_node_status(delta, master)
+
+	-- TODO: if we were the original part of the link then we probably
+	-- 		 need to link ourselves back to the pointer bit.
+
+	-- TODO TODO TODO
+	if(master._link_dests) then
+		for _, k in ipairs(master._link_dests) do
+			print("WOULD LINK TO: " .. k)
+		end
+	end
 end
 
 
@@ -577,7 +607,6 @@ end
 --
 function commit_delta(delta, master, active, originals)
 	while(1) do
-		dump(delta)
 		print("RUN")
 		local did_work, err = apply_delta(delta, master, active, originals)
 		if(did_work == nil) then
@@ -830,11 +859,23 @@ function alter_config(delta, master, path, fields)
 		-- make orig path
 		-- set the dc to the one we've just set
 		-- update our patent status
-		local parent, node = string.match(orig_path, "^(.*)/([^/]+)$")
-		local d = make_path(delta, parent)
-		d[node] = dc
+--		local parent, node = string.match(orig_path, "^(.*)/([^/]+)$")
+--		local d = make_path(delta, parent)
+--		d[node] = dc
+		print("LINKING: " .. orig_path)
+		link_node(delta, dc, orig_path)
 		parent_status_update(delta, master, orig_path)
 	end
+end
+
+--
+-- given a table (typically delta or active) a current node and a
+-- destination path, create the dest as a link to current.
+--
+function link_node(t, src, path)
+	local parent, node = string.match(path, "^(.*)/([^/]+)$")
+	local new = make_path(t, parent)
+	new[node] = src
 end
 
 --
@@ -1077,7 +1118,7 @@ end
 -- containers so we can use the 'each_field', 'each_container'
 -- functions
 --
-function prepare_master(master, gmaster, path)
+function prepare_master(master, gmaster, path, has_func)
 	-- internal arguments
 	gmaster = gmaster or master				-- keep our top level reference
 	path = path or ""						-- so we know where we are
@@ -1087,13 +1128,15 @@ function prepare_master(master, gmaster, path)
 	local sorted = master._order or {}
 	local unsorted = {}
 
+	if(master._function) then has_func = true end
+
 	if(not is_in_list(sorted, "comment")) then table.insert(sorted, 1, "comment") end
 
 	for k, mc in non_directive_fields(master) do
 		local is_list = mc._type and string.sub(mc._type, 1, 5) == "list/"
 
 		if(not is_list) then
-			prepare_master(mc, gmaster, path .. "/" .. k)
+			prepare_master(mc, gmaster, path .. "/" .. k, has_func)
 			has_children = 1
 		end
 		if(not is_in_list(sorted, k)) then table.insert(unsorted, k) end
@@ -1109,9 +1152,15 @@ function prepare_master(master, gmaster, path)
 
 	-- if we are a link to somewhere else then fill in the _link_mc
 	if(master._link) then
-		print("PREP MASTER: LINK to " .. master._link)
-		master._has_children = 1
-		master._link_mc = get_node(master._link, gmaster)
+		if(has_func) then
+			print("LINK within function domain, ignoring: " .. path)
+			master._link = nil
+		else
+			master._has_children = 1
+			master._link_mc = get_node(master._link, gmaster)
+			if(not master._link_mc._link_dests) then master._link_mc._link_dests = {} end
+			table.insert(master._link_mc._link_dests, path)
+		end
 	end
 end
 
@@ -1202,19 +1251,18 @@ CONFIG.delta = copy_table(CONFIG.active)
 --alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "secondaries=1.2.3.5",
 --										"secondaries=2.3.4.5" })
 --alter_config(CONFIG.delta, CONFIG.master, "/fred/new/dns", { "set=55" })
-print("1")
-alter_config(CONFIG.delta, CONFIG.master, "/fred/new/dns", { "comment=r4" })
-print("2")
+alter_config(CONFIG.delta, CONFIG.master, "/fred/new/dns", { "resolvers=r4" })
+alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/2", { "address=1.2.3.4/3" })
 --alter_config(CONFIG.delta, CONFIG.master, "/test/test2/test3/dhcp", { "lee=abcdabcd" })
-print("3")
-dump(CONFIG.delta)
+--dump(CONFIG.delta)
 
 print("=================")
 commit_delta(CONFIG.delta, CONFIG.master, CONFIG.active, CONFIG)
 
 --dump(CONFIG.delta)
-show_config(CONFIG.delta, CONFIG.master)
---dump_config(CONFIG.active, CONFIG.master)
+--show_config(CONFIG.delta, CONFIG.master)
+dump(CONFIG.active)
+dump_config(CONFIG.active, CONFIG.master)
 --
 --revert_config(CONFIG.delta, CONFIG.master, "/fred/two")
 --
