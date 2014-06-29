@@ -1,4 +1,28 @@
 #!./luajit
+--------------------------------------------------------------------------------
+--  This file is part of OpenTik
+--  Copyright (C) 2014 Lee Essen <lee.essen@nowonline.co.uk>
+--
+--  This program is free software: you can redistribute it and/or modify
+--  it under the terms of the GNU General Public License as published by
+--  the Free Software Foundation, either version 3 of the License, or
+--  (at your option) any later version.
+--
+--  This program is distributed in the hope that it will be useful,
+--  but WITHOUT ANY WARRANTY; without even the implied warranty of
+--  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+--  GNU General Public License for more details.
+--
+--  You should have received a copy of the GNU General Public License
+--  along with this program.  If not, see <http://www.gnu.org/licenses/>.
+--------------------------------------------------------------------------------
+
+package.path = "./lib/?.lua"
+package.cpath = "./lib/?.so"
+
+require("lfs")
+require("base64")
+
 
 --
 -- Basic lua functions for showing differences between two tables
@@ -10,7 +34,7 @@ master = {
 			_type = "list/ipv4"
 		},
 		["billy"] = {
-			_type = "fed"
+			_type = "file/text"
 		},
 		["abc"] = {
 			["yes"] = {
@@ -38,7 +62,7 @@ master = {
 one = {
 	["dns"] = {
 		resolvers = { "one", "two", "three" },
-		billy = "hello",
+		billy = "hello herskjhfglskjhfg sdlfkjghs dflgkjhds flkjghds lfkghsdlkfjghsldkfjg sdlkfhg sdlkfhg sldkjfg lsdkfjhg lsdkfjhg sldkhfg lsdkfg lsdkfjhg sldkfjhgs ldkfjgh lskdfhg lskdfjhgl ksdfhgl sdkfhg lskdfhg lskdhfgl ksdjfg lkjsdadflkjhdlkjha dlfkjhas ldkjfhas ldkjfhal skdjfh laskjdhfl aksdjf laskdjf lasjdkhfl asdhfla ksdjf lasjdf lasdjf laskf laskjflaksjdhf laskjdhf lasjkdhfl aksjdhf laksjdhf laskdh lfkjasdff g",
 		abc = {
 			yes = 1, no = 2
 		}
@@ -260,6 +284,42 @@ function list_first_match(a, b)
 end
 
 --
+-- Handle the display of both dinay and text files
+--
+function show_file(mode, ftype, k, value, indent, dump)
+	local rc = ""
+	ftype = string.sub(ftype, 6)
+
+	rc = rc .. op(mode, indent, k, "<" .. ftype .. ">")
+	if(ftype == "binary") then
+		local binary = enc(value)
+		for i=1, #binary, 76 do
+			rc = rc .. op(mode, indent+4, string.sub(binary, i, i+75))
+			if(not dump) then
+				if(i >= 76*3) then
+					rc = rc .. op(mode, indent+4, "... (total " .. #binary .. " bytes)")
+					break
+				end
+			end
+		end
+	elseif(ftype == "text") then
+		local lc = 0
+		for line in (value .. "\n"):gmatch("(.-)\n") do
+			rc = rc .. op(mode, indent+4, "|" .. line)
+			if(not dump) then
+				lc = lc + 1
+				if(lc >= 4) then
+					rc = rc .. op(mode, indent+4, "... <more>")
+					break
+				end
+			end
+		end
+		if(dump) then rc = rc .. op(mode, indent+4, "<eof>") end
+	end
+	return rc
+end
+
+--
 -- we keep calling the list_first_match() function to work through
 -- both lists ... we do change the lists, so we need to copy them first
 --
@@ -300,8 +360,12 @@ function show_fields(a, b, master, indent, dump)
 			elseif(not av) then mode = "+" 
 			elseif(not bv) then mode = "-" 
 			elseif(av ~= bv) then mode = "|" end
-		
-			rc = rc .. op(mode, indent, k, value)
+	
+			if(string.sub(ftype, 1, 5) == "file/") then
+				rc = rc .. show_file(mode, ftype, k, value, indent, dump)
+			else	
+				rc = rc .. op(mode, indent, k, value)
+			end
 		end
 	end
 	return rc
@@ -421,8 +485,27 @@ function read_config(filename, master, file)
 					if(not rc[key]) then rc[key] = {} end
 					table.insert(rc[key], value)
 				elseif(is_file) then
-					-- TODO
-					-- 	
+					local data = ""
+
+					while(1) do
+						local line = file:read()
+						if(mc._type == "file/binary") then
+							line = string.gsub(line, "^%s+", "")
+							data = data .. line
+							if(string.match(line, "==$")) then
+								rc[key] = dec(data)
+								break
+							end
+						elseif(mc._type == "file/text") then
+							if(string.match(line, "^%s+<eof>$")) then
+								rc[key] = data
+								break
+							end
+							line = string.gsub(line, "^%s+|", "")
+							if(#data > 0) then data = data .. "\n" end
+							data = data .. line
+						end
+					end
 				elseif(mc) then
 					rc[key] = value
 				end
@@ -503,11 +586,11 @@ end
 
 
 prepare_master(master)
---print(show_config(two, one, master))
+print(show_config(two, one, master))
 --print(dump_config(one, master))
 
-x = read_config("sample", master)
-print(dump_config(x, master))
+--x = read_config("sample", master)
+--print(dump_config(x, master))
 
 a = { "one", "two", "three", { x=1, y=2 } }
 b = { "one", "two", "three", { y=2, x=1 } }
