@@ -7,7 +7,7 @@
 master = {
 	["dns"] = {
 		["resolvers"] = {
-			_type = "fred"
+			_type = "list/ipv4"
 		},
 		["billy"] = {
 			_type = "fed"
@@ -37,7 +37,7 @@ master = {
 
 one = {
 	["dns"] = {
-		resolvers = "yes",
+		resolvers = { "one", "two", "three" },
 		billy = "hello",
 		abc = {
 			yes = 1, no = 2
@@ -62,6 +62,9 @@ two = {
 		["a"] = {
 			fred = 5
 		}
+	},
+	["dns"] = {
+		resolvers = { "four" }
 	}
 }
 
@@ -77,16 +80,20 @@ function is_in_list(list, item)
 end
 
 --
+-- return the index of a match from a list
+--
+function find_in_list(list, item)
+	for i = 1, #list do
+		if(list[i] == item) then return i end
+	end
+	return nil
+end
+
+--
 -- remove a particulare item from a list
 --
 function remove_from_list(list, item)
-	local p = nil
-	for i = 1,#list do
-		if(list[i] == item) then
-			p = i
-			break
-		end
-	end
+	local p = find_in_list(list, item)
 	if(p) then table.remove(list, p) end
 	return p
 end
@@ -99,6 +106,19 @@ function append_list(a, b)
 		table.insert(a, k)
 	end
 end
+
+--
+-- recursively copy a table
+--
+function copy_table(t)
+	local rc = {}
+	for k, v in pairs(t) do
+		if(type(v) == "table") then rc[k] = copy_table(v)
+		else rc[k] = v end
+	end
+	return rc
+end
+
 
 --
 -- dump a table for debugging
@@ -114,23 +134,25 @@ function dump(t, i)
 end
 
 --
--- returns an iterator that cycles through each field listen in
--- the master (i.e. where _type is defined), the order is determined
--- by looking at the _order definition, and then prepending "comment"
--- (if it's missed) and then adding anything left
+-- returns an iterator that cycles through each field listed in the
+-- provided master. The _fields directive is created by the prepare_master
+-- function
 --
 function each_field(m)
 	local i = 0
 	return function()
 		i = i + 1
-		return m._fields[i]
+		local k = m._fields[i]
+
+		if(not k) then return nil end
+		return k, m[k]._type
 	end
 end
 
 --
 -- returns an iterator that finds any container contained within a
 -- or b, it uses master to work out if it's a container of not. They
--- are iterated in alphabetical order
+-- are iterated in _order order, with wildcards alphabetically
 --
 function each_container(a, b, m)
 	-- build list of containers from a and b... work out if they are wildcards...
@@ -170,34 +192,73 @@ function each_container(a, b, m)
 end
 
 --
--- thinking about how to do a list diff...
+-- given two lists (a and b), we process up to the first match that we find where
+-- an item from b is in a. At that point we return any prior items from a as deleted,
+-- any items from b that are added, and then the matching item.
 --
--- the order is important so we can't just do a sorted comparison
--- 1. if items from the original list are not in the second, then show them deleted
--- 2. if there are extra items then they are clearly added
--- 3. if items from the original list are still there, in the same order then "no change"
---
---
--- go through second list .. if we find an item from the first list, then mark any prior ones as deleted
--- mark the item as same.
--- anything not found on the first list is added.
--- anything left in the first list should be shown as deleted
---
+function list_first_match(a, b)
+	local added = {}
+	local removed = {}
+	local matched = nil
 
+	while(b[1]) do
+		local i = find_in_list(a, b[1])
+		if(i) then
+			for d = 1, i-1 do
+				table.insert(removed, a[1])
+				table.remove(a, 1)
+			end
+			matched = b[1]
+			table.remove(a, 1)
+			table.remove(b, 1)
+			break
+		else
+			table.insert(added, b[1])
+			table.remove(b, 1)
+		end
+	end
 
+	-- if we didn't match anything, then all in (a) is removed...	
+	if(not matched) then while(a[1]) do table.insert(removed, a[1]) table.remove(a, 1) end end
 
+	-- now prepare ... removed, added and then match
+	local op = {}
+	for _,k in ipairs(removed) do table.insert(op, { item=k, op = "-" }) end
+	for _,k in ipairs(added) do table.insert(op, { item=k, op = "+" }) end
+	if(matched) then table.insert(op, { item=matched, op = " " }) end
+	return op
+end
+
+--
+-- we keep calling the list_first_match() function to work through
+-- both lists ... we do change the lists, so we need to copy them first
+--
+function show_list(aa, bb, label, indent)
+	local a = copy_table(aa or {})
+	local b = copy_table(bb or {})
+
+	while(a[1] or b[1]) do
+		local l = list_first_match(a, b)
+		for _,k in ipairs(l) do
+			print(k.op .. " " .. string.rep(" ", indent) .. label .. " " .. k.item)
+		end
+	end
+end
 
 
 function show_fields(a, b, master, indent)
 	indent = indent or 0
 
-	for k in each_field(master) do
+	for k, ftype in each_field(master) do
 		local av = a and a[k]
 		local bv = b and b[k]
 		local value = bv or av
 		local mode = " "
 
-		if(value) then
+		if(string.sub(ftype, 1, 5) == "list/") then
+			print("LIST")
+			show_list(av, bv, k, indent)
+		elseif(value) then
 			if(not av) then mode = "+" 
 			elseif(not bv) then mode = "-" 
 			elseif(av ~= bv) then mode = "|" end
@@ -311,4 +372,9 @@ end
 prepare_master(master)
 diff(one, two, master)
 
+-- a = { "one", "two", "three" }
+-- b = { "six", "two", "eight", "three" }
+--a = {} 
+
+--list_compare(a, b)
 
