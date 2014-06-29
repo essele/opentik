@@ -46,7 +46,8 @@ one = {
 	["dhcp"] = {
 		["a"] = {
 			fred = 1,
-			bill = 2
+			bill = 2,
+			comment = { "one", "two", "", "four big long comment line" }
 		},
 		["b"] = {
 			fred = 50
@@ -119,6 +120,35 @@ function copy_table(t)
 	return rc
 end
 
+--
+-- compare things ... they should have the same elements and values
+-- (recusively)
+--
+function are_the_same(a, b)
+	if(type(a) ~= type(b)) then return false end
+
+	if(type(a) == "table") then
+		local keys = {}
+		for k,_ in pairs(a) do keys[k] = 1 end
+		for k,_ in pairs(b) do keys[k] = 1 end
+
+		for k,_ in pairs(keys) do
+			if(not are_the_same(a[k], b[k])) then return false end
+		end
+	else
+		if(a ~= b) then return false end
+	end
+	return true
+end
+
+--
+-- standard formatting is "[mode] [indent][label] [value]"
+--
+function op(mode, indent, label, value)
+	local rh = (value and (label .. " " .. value)) or label
+	
+	return mode .. string.rep(" ", indent+1) .. rh .. "\n"
+end
 
 --
 -- dump a table for debugging
@@ -233,21 +263,28 @@ end
 -- we keep calling the list_first_match() function to work through
 -- both lists ... we do change the lists, so we need to copy them first
 --
-function show_list(aa, bb, label, indent)
+function show_list(aa, bb, label, indent, dump)
 	local a = copy_table(aa or {})
 	local b = copy_table(bb or {})
+	local rc = ""
 
 	while(a[1] or b[1]) do
 		local l = list_first_match(a, b)
 		for _,k in ipairs(l) do
-			print(k.op .. " " .. string.rep(" ", indent) .. label .. " " .. k.item)
+			local mode = (dump and " ") or k.op
+
+			rc = rc .. op(mode, indent, label, k.item)
 		end
 	end
+	return rc
 end
 
-
-function show_fields(a, b, master, indent)
-	indent = indent or 0
+--
+-- Display the non-container items from within a given node and
+-- show if they are added/removed/changed
+--
+function show_fields(a, b, master, indent, dump)
+	local rc = ""
 
 	for k, ftype in each_field(master) do
 		local av = a and a[k]
@@ -256,28 +293,36 @@ function show_fields(a, b, master, indent)
 		local mode = " "
 
 		if(string.sub(ftype, 1, 5) == "list/") then
-			print("LIST")
-			show_list(av, bv, k, indent)
+			if(not dump and k == "comment") then k = "#" end
+			rc = rc .. show_list(av, bv, k, indent, dump)
 		elseif(value) then
-			if(not av) then mode = "+" 
+			if(dump) then mode = " "
+			elseif(not av) then mode = "+" 
 			elseif(not bv) then mode = "-" 
 			elseif(av ~= bv) then mode = "|" end
-
-			print(mode .. " " .. string.rep(" ", indent) .. k .. " " .. value)
+		
+			rc = rc .. op(mode, indent, k, value)
 		end
 	end
+	return rc
 end
 
-function diff(a, b, master, indent, parent)
+--
+-- Display the config/delta in a form that is useful to a person.
+-- Note that this is not used to save config information, a more
+-- basic (less pretty) output is used.
+--
+function show_config(a, b, master, indent, parent)
 	indent = indent or 0
+	local rc = ""
 
 	-- first the fields
 	if(parent and each_field(master)()) then
-		print("  " .. string.rep(" ", indent) .. parent .. " (settings) {")
-		show_fields(a, b, master, indent+4)
-		print("  " .. string.rep(" ", indent) .. "}")
+		rc = rc .. op(" ", indent, parent, "(settings) {")
+				.. show_fields(a, b, master, indent+4)
+				.. op(" ", indent, "}")
 	else
-		show_fields(a, b, master, indent)
+		rc = rc .. show_fields(a, b, master, indent)
 	end
 
 	-- now the containters
@@ -293,14 +338,47 @@ function diff(a, b, master, indent, parent)
 		local label = (mt._label or "") .. k
 
 		if(mt._keep_with_children) then
-			diff(av, bv, mt, indent, k)
+			rc = rc .. show_config(av, bv, mt, indent, k)
 		else
-			print(mode .. " " .. string.rep(" ", indent) .. label .. " {")
-			diff(av, bv, mt, indent+4)
-			print(mode .. " " .. string.rep(" ", indent) .. "}")
+			rc = rc .. op(mode, indent, label, "{")
+					.. show_config(av, bv, mt, indent+4)
+					.. op(mode, indent, "}")
 		end
 ::continue::
 	end
+	return rc
+end
+
+--
+-- We need to be able to save/restore given configs, so we have
+-- a basic function that dumps a single table in a format which
+-- is human and machine readable.
+--
+-- The show_fields function has a dump flag which outputs in
+-- a slightly different format.
+--
+function dump_config(a, master, indent)
+	indent = indent or 0
+	local rc = ""
+	
+	-- first the fields
+	rc = rc .. show_fields(a, nil, master, indent, true)
+
+	-- now the containers
+	for k in each_container(a, nil, master) do
+		local mt = master and (master[k] or master["*"])
+		rc = rc .. op(" ", indent, k, "{")
+				.. dump_config(a[k], mt, indent+4)
+				.. op(" ", indent, "}")
+	end
+	return rc
+end
+
+--
+-- We need to be able to load a config back in from a file
+-- containing a dump.
+--
+function load_config()
 end
 
 --
@@ -310,13 +388,12 @@ end
 -- 1. Build the order field
 -- 2. Create the _label options
 --
-
 function prepare_master(m, parent_name)
 	--
 	-- make sure we have a definition for comment in every node
 	--
 	if(not m["comment"]) then
-		m["comment"] = { _type = "string", _no_exec = 1 }
+		m["comment"] = { _type = "list/string", _no_exec = 1 }
 	end
 
 	--
@@ -370,11 +447,16 @@ end
 
 
 prepare_master(master)
-diff(one, two, master)
+--print(show_config(two, one, master))
+print(dump_config(two, master))
 
--- a = { "one", "two", "three" }
--- b = { "six", "two", "eight", "three" }
+a = { "one", "two", "three", { x=1, y=2 } }
+b = { "one", "two", "three", { y=2, x=1 } }
+--b = { "six", "two", "eight", "three" }
 --a = {} 
 
 --list_compare(a, b)
+
+print(tostring(are_the_same(a, b)))
+
 
