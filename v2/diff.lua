@@ -28,13 +28,14 @@ require("base64")
 -- Basic lua functions for showing differences between two tables
 --
 
-master = {
+CONFIG = {}
+CONFIG.master = {
 	["dns"] = {
 		["resolvers"] = {
 			_type = "list/ipv4"
 		},
 		["billy"] = {
-			_type = "file/text"
+			_type = "file/binary"
 		},
 		["abc"] = {
 			["yes"] = {
@@ -59,7 +60,7 @@ master = {
 	["x"] = { _type = "xx" }
 }
 
-one = {
+CONFIG.active = {
 	["dns"] = {
 		resolvers = { "one", "two", "three" },
 		billy = "hello herskjhfglskjhfg sdlfkjghs dflgkjhds flkjghds lfkghsdlkfjghsldkfjg sdlkfhg sdlkfhg sldkjfg lsdkfjhg lsdkfjhg sldkhfg lsdkfg lsdkfjhg sldkfjhgs ldkfjgh lskdfhg lskdfjhgl ksdfhgl sdkfhg lskdfhg lskdhfgl ksdjfg lkjsdadflkjhdlkjha dlfkjhas ldkjfhas ldkjfhal skdjfh laskjdhfl aksdjf laskdjf lasjdkhfl asdhfla ksdjf lasjdf lasdjf laskf laskjflaksjdhf laskjdhf lasjkdhfl aksjdhf laksjdhf laskdh lfkjasdff g",
@@ -81,7 +82,7 @@ one = {
 	}
 }
 
-two = {
+CONFIG.delta = {
 	["x"] = 1,
 	["dhcp"] = {
 		["a"] = {
@@ -166,13 +167,81 @@ function are_the_same(a, b)
 end
 
 --
--- standard formatting is "[mode] [indent][label] [value]"
+-- standard formatting for show and dump is "[mode] [indent][label] [value]"
 --
 function op(mode, indent, label, value)
 	local rh = (value and (label .. " " .. value)) or label
 	
 	return mode .. string.rep(" ", indent+1) .. rh .. "\n"
 end
+
+--
+-- make path will create the structure to support the given path (if it
+-- doesn't already exist)
+--
+function make_path(path, t)
+	for key in string.gmatch(path, "([^/]+)") do
+		if(not t[key]) then t[key] = {} end
+		t = t[key]
+	end
+	return t
+end
+
+--
+-- get node will find the given node in the structure
+-- (support the wildcards)
+--
+function get_node(path, t)
+	for key in string.gmatch(path, "([^/]+)") do
+		t = t and (t[key] or t["*"])
+	end
+	return t
+end
+
+--
+-- delete just removes a whole chunk from a config
+--
+function delete_node(path)
+	-- handle the "everything" case...
+	if(path == "" or path == "/") then
+		CONFIG.delta = {}
+		return
+	end
+	
+	local parent, node = string.match(path, "^(.*)/([^/]+)$")
+	local p = get_node(parent, CONFIG.delta)
+	if(not p) then
+		print("PARENT PATH DOES NOT EXIST for: "..path)
+		return 
+	end
+
+	p[node] = nil
+end
+
+--
+-- revert will make the table look the same as the original, this
+-- will involve either a delete, or a copy from orig.
+--
+function revert_node(path)
+	-- handle the "everything" case...
+	if(path == "" or path == "/") then
+		CONFIG.delta = copy_table(CONFIG.active)
+		return
+	end
+
+	local ac = get_node(path, CONFIG.active)
+
+	-- if not present in the original, then we delete it...
+	if(not ac) then return delete_node(path) end
+
+	-- now make sure we have the parent structure, and copy...
+	local parent, node = string.match(path, "^(.*)/([^/]+)$")
+	print("parent=["..parent.."] node=["..tostring(node).."]")
+	local p = make_path(parent, CONFIG.delta)
+
+	p[node] = (type(ac) == "table" and copy_table(ac)) or ac
+end
+
 
 --
 -- dump a table for debugging
@@ -295,13 +364,12 @@ function show_file(mode, ftype, k, value, indent, dump)
 		local binary = enc(value)
 		for i=1, #binary, 76 do
 			rc = rc .. op(mode, indent+4, string.sub(binary, i, i+75))
-			if(not dump) then
-				if(i >= 76*3) then
-					rc = rc .. op(mode, indent+4, "... (total " .. #binary .. " bytes)")
-					break
-				end
+			if(not dump and i >= 76*3) then
+				rc = rc .. op(mode, indent+4, "... (total " .. #binary .. " bytes)")
+				break
 			end
 		end
+		if(dump) then rc = rc .. op(mode, indent+4, "<eof>") end
 	elseif(ftype == "text") then
 		local lc = 0
 		for line in (value .. "\n"):gmatch("(.-)\n") do
@@ -490,12 +558,11 @@ function read_config(filename, master, file)
 					while(1) do
 						local line = file:read()
 						if(mc._type == "file/binary") then
-							line = string.gsub(line, "^%s+", "")
-							data = data .. line
-							if(string.match(line, "==$")) then
+							if(string.match(line, "^%s+<eof>$")) then
 								rc[key] = dec(data)
 								break
 							end
+							line = string.gsub(line, "^%s+", "")
 						elseif(mc._type == "file/text") then
 							if(string.match(line, "^%s+<eof>$")) then
 								rc[key] = data
@@ -503,8 +570,8 @@ function read_config(filename, master, file)
 							end
 							line = string.gsub(line, "^%s+|", "")
 							if(#data > 0) then data = data .. "\n" end
-							data = data .. line
 						end
+						data = data .. line
 					end
 				elseif(mc) then
 					rc[key] = value
@@ -528,6 +595,7 @@ end
 -- 2. Create the _label options
 --
 function prepare_master(m, parent_name)
+	m = m or CONFIG.master
 	--
 	-- make sure we have a definition for comment in every node
 	--
@@ -584,9 +652,60 @@ function prepare_master(m, parent_name)
 	m._order = nil
 end
 
+--
+-- Here we set a set of field values for a given node, we do syntax
+-- checking on the fields, and make sure the fields are valid, so this
+-- change won't succeed unless everything is ok.
+--
+-- i.e. partial changes do not happen
+--
+function set_config(path, items)
+	-- first check the node is valid...
+	local mc = get_node(path, CONFIG.master)
+	if(not mc or mc._type) then
+		print("INVALID PATH: " .. path)
+		return false
+	end
 
-prepare_master(master)
-print(show_config(two, one, master))
+	-- now check each of the fields are valid
+	for k,v in pairs(items) do
+		if(not mc[k] or not mc[k]._type) then
+			print("FIELD INVALID: " .. k)
+			return false
+		end
+		-- TODO: field validation
+	end
+
+	-- make sure we have supporting strucure and
+	-- create the node if needed
+	local ac = make_path(path, CONFIG.delta)
+
+	-- now we can set each field...
+	for k,v in pairs(items) do
+		local ftype = mc[k]._type
+
+		if(ftype:sub(1, 5) == "list/") then
+			ac[k] = copy_table(v)
+		elseif(ftype:sub(1, 5) == "file/") then
+			-- TODO: read file
+		else
+			ac[k] = v
+		end
+	end
+end
+
+
+
+prepare_master()
+
+CONFIG.delta = copy_table(CONFIG.active)
+print(show_config(CONFIG.active, CONFIG.delta, CONFIG.master))
+print("-----")
+--delete_node("/dhcp/a/fred")
+--revert_node("/dhcp/a/fred")
+set_config("/dhcp/a/fred", { fred="hello", comment={ "", "new item", "" }})
+
+print(show_config(CONFIG.active, CONFIG.delta, CONFIG.master))
 --print(dump_config(one, master))
 
 --x = read_config("sample", master)
