@@ -378,7 +378,63 @@ end
 -- We need to be able to load a config back in from a file
 -- containing a dump.
 --
-function load_config()
+function read_config(filename, master, file)
+	local rc = {}
+	local line
+
+	-- file is internal, for our recursion
+	if(not file) then
+		file = io.open(filename)
+		-- TODO: handle errors
+	end
+
+	while(true) do
+		line = file:read()
+		if(not line) then break end
+	
+		-- skip empty lines
+		if(string.match(line, "^%s*$")) then goto continue end
+
+		-- a close bracket if a recursion return, so exit loop
+		if(string.match(line, "}$")) then break end
+
+		-- look for a section start
+		local sec = string.match(line, "^%s*([^%s]+)%s+{$")
+		if(sec) then
+			local mc = master and (master[sec] or master["*"])
+			local ac
+
+			-- read a new section, but only fill in if master is valid
+			ac = read_config(nil, mc, file)
+			if(mc) then rc[sec] = ac end
+		else
+			-- this should be a field...
+			local key, value = string.match(line, "^%s*([^%s]+)%s+(.*)$")
+			if(not key) then
+				print("FIELD ERROR: " .. line)
+			else
+				local mc = master and master[key]
+				local is_list = mc and mc._type and string.sub(mc._type, 1, 5) == "list/"
+				local is_file = mc and mc._type and string.sub(mc._type, 1, 5) == "file/"
+
+				if(is_list) then
+					if(not rc[key]) then rc[key] = {} end
+					table.insert(rc[key], value)
+				elseif(is_file) then
+					-- TODO
+					-- 	
+				elseif(mc) then
+					rc[key] = value
+				end
+			end
+		end
+::continue::
+	end
+
+	-- close the file if we are the top level
+	if(filename) then file:close() end
+
+	return rc
 end
 
 --
@@ -448,7 +504,10 @@ end
 
 prepare_master(master)
 --print(show_config(two, one, master))
-print(dump_config(two, master))
+--print(dump_config(one, master))
+
+x = read_config("sample", master)
+print(dump_config(x, master))
 
 a = { "one", "two", "three", { x=1, y=2 } }
 b = { "one", "two", "three", { y=2, x=1 } }
