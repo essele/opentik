@@ -54,8 +54,13 @@ CONFIG.master = {
 			["fred"] = { _type = "xx" },
 			["bill"] = { _type = "xx" }
 		},
-		["blah"] = { _type = 45 },
-		["blah2"] = { _type = 45 }
+		["blah"] = { _type = "xx" },
+		["blah2"] = { _type = "xy" }
+	},
+	["lee"] = {
+		_function = function() print("FCALL") end,
+		["dns"] = { _alias = "/dnsmasq/dns" },
+		["dhcp"] = { _alias = "/dnsmasq/dhcp" },
 	},
 	["x"] = { _type = "xx" }
 }
@@ -79,21 +84,9 @@ CONFIG.active = {
 		},
 		["blah"] = 45,
 		["blah2"] = "ab"
-	}
-}
-
-CONFIG.delta = {
-	["x"] = 1,
-	["dhcp"] = {
-		["a"] = {
-			fred = 5
-		}
 	},
-	["dns"] = {
-		resolvers = { "four" }
-	}
+	["x"]= 1
 }
-
 
 --
 -- see if a list contains a particular item
@@ -167,6 +160,18 @@ function are_the_same(a, b)
 end
 
 --
+-- remove any empty tables recursively (on the way back)
+--
+function clean_table(t)
+	for k,v in pairs(t) do
+		if(type(v) == "table") then 
+			clean_table(v)
+			if(not next(v)) then t[k] = nil end
+		end
+	end
+end
+
+--
 -- standard formatting for show and dump is "[mode] [indent][label] [value]"
 --
 function op(mode, indent, label, value)
@@ -207,7 +212,7 @@ function delete_node(path)
 		CONFIG.delta = {}
 		return
 	end
-	
+
 	local parent, node = string.match(path, "^(.*)/([^/]+)$")
 	local p = get_node(parent, CONFIG.delta)
 	if(not p) then
@@ -216,6 +221,9 @@ function delete_node(path)
 	end
 
 	p[node] = nil
+
+	-- remove any empty lists
+	clean_table(CONFIG.delta)
 end
 
 --
@@ -240,6 +248,9 @@ function revert_node(path)
 	local p = make_path(parent, CONFIG.delta)
 
 	p[node] = (type(ac) == "table" and copy_table(ac)) or ac
+
+	-- remove any empty lists
+	clean_table(CONFIG.delta)
 end
 
 
@@ -357,13 +368,13 @@ end
 --
 function show_file(mode, ftype, k, value, indent, dump)
 	local rc = ""
-	ftype = string.sub(ftype, 6)
+	ftype = ftype:sub(6)
 
 	rc = rc .. op(mode, indent, k, "<" .. ftype .. ">")
 	if(ftype == "binary") then
 		local binary = enc(value)
 		for i=1, #binary, 76 do
-			rc = rc .. op(mode, indent+4, string.sub(binary, i, i+75))
+			rc = rc .. op(mode, indent+4, binary:sub(i, i+75))
 			if(not dump and i >= 76*3) then
 				rc = rc .. op(mode, indent+4, "... (total " .. #binary .. " bytes)")
 				break
@@ -420,7 +431,7 @@ function show_fields(a, b, master, indent, dump)
 		local value = bv or av
 		local mode = " "
 
-		if(string.sub(ftype, 1, 5) == "list/") then
+		if(ftype:sub(1, 5) == "list/") then
 			if(not dump and k == "comment") then k = "#" end
 			rc = rc .. show_list(av, bv, k, indent, dump)
 		elseif(value) then
@@ -429,7 +440,7 @@ function show_fields(a, b, master, indent, dump)
 			elseif(not bv) then mode = "-" 
 			elseif(av ~= bv) then mode = "|" end
 	
-			if(string.sub(ftype, 1, 5) == "file/") then
+			if(ftype:sub(1, 5) == "file/") then
 				rc = rc .. show_file(mode, ftype, k, value, indent, dump)
 			else	
 				rc = rc .. op(mode, indent, k, value)
@@ -611,7 +622,7 @@ function prepare_master(m, parent_name)
 	local containers = {}
 
 	for k,mv in pairs(m) do
-		if(string.sub(k, 1, 1) == "_") then goto continue end
+		if(k:sub(1, 1) == "_") then goto continue end
 
 		if(mv._type) then table.insert(fields, k)
 		else table.insert(containers, k) end
@@ -684,7 +695,10 @@ function set_config(path, items)
 	for k,v in pairs(items) do
 		local ftype = mc[k]._type
 
-		if(ftype:sub(1, 5) == "list/") then
+		-- if we are an empty string then remove (lists will be cleaned anyway)
+		if(type(v) == "string" and v == "") then
+			ac[k] = nil
+		elseif(ftype:sub(1, 5) == "list/") then
 			ac[k] = copy_table(v)
 		elseif(ftype:sub(1, 5) == "file/") then
 			-- TODO: read file
@@ -692,6 +706,8 @@ function set_config(path, items)
 			ac[k] = v
 		end
 	end
+	-- remove and empty lists
+	clean_table(CONFIG.delta)
 end
 
 
@@ -701,9 +717,9 @@ prepare_master()
 CONFIG.delta = copy_table(CONFIG.active)
 print(show_config(CONFIG.active, CONFIG.delta, CONFIG.master))
 print("-----")
---delete_node("/dhcp/a/fred")
 --revert_node("/dhcp/a/fred")
-set_config("/dhcp/a/fred", { fred="hello", comment={ "", "new item", "" }})
+set_config("/dhcp/a", { fred="", comment={ "", "new item", "" }})
+set_config("/dhcp/b", { fred="" })
 
 print(show_config(CONFIG.active, CONFIG.delta, CONFIG.master))
 --print(dump_config(one, master))
