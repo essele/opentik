@@ -30,37 +30,37 @@ require("base64")
 
 CONFIG = {}
 CONFIG.master = {
-	["dns"] = {
-		["resolvers"] = {
-			_type = "list/ipv4"
-		},
-		["billy"] = {
-			_type = "file/binary"
-		},
-		["abc"] = {
-			["yes"] = {
-				_type = "fred"
-			},
-			["no"] = {
-				_type = "bool"
-			}
-		}
-	},
-	["dhcp"] = {
-		_keep_with_children = 1,
-		["*"] = {
---			_label = "dhcp ",
-			_order = { "fred", "bill" },
-			["fred"] = { _type = "xx" },
-			["bill"] = { _type = "xx" }
-		},
-		["blah"] = { _type = "xx" },
-		["blah2"] = { _type = "xy" }
-	},
-	["lee"] = {
+	["dns"] = { _alias = "/dnsmasq/dns" },
+	["dhcp"] = { _alias = "/dnsmasq/dhcp" },
+	["dnsmasq"] = {
 		_function = function() print("FCALL") end,
-		["dns"] = { _alias = "/dnsmasq/dns" },
-		["dhcp"] = { _alias = "/dnsmasq/dhcp" },
+		["dns"] = {
+			["resolvers"] = {
+				_type = "list/ipv4"
+			},
+			["billy"] = {
+				_type = "file/binary"
+			},
+			["abc"] = {
+				["yes"] = {
+					_type = "fred"
+				},
+				["no"] = {
+					_type = "bool"
+				}
+			}
+		},
+		["dhcp"] = {
+			_keep_with_children = 1,
+			["*"] = {
+	--			_label = "dhcp ",
+				_order = { "fred", "bill" },
+				["fred"] = { _type = "xx" },
+				["bill"] = { _type = "xx" }
+			},
+			["blah"] = { _type = "xx" },
+			["blah2"] = { _type = "xy" }
+		},
 	},
 	["x"] = { _type = "xx" }
 }
@@ -139,6 +139,17 @@ function copy_table(t)
 end
 
 --
+-- return a hash of all the keys in the given tables
+--
+function keys(a, b, c)
+	local rc = {}
+	if(a) then for k,_ in pairs(a) do rc[k] = 1 end end
+	if(b) then for k,_ in pairs(b) do rc[k] = 1 end end
+	if(c) then for k,_ in pairs(c) do rc[k] = 1 end end
+	return rc
+end
+
+--
 -- compare things ... they should have the same elements and values
 -- (recusively)
 --
@@ -146,11 +157,11 @@ function are_the_same(a, b)
 	if(type(a) ~= type(b)) then return false end
 
 	if(type(a) == "table") then
-		local keys = {}
-		for k,_ in pairs(a) do keys[k] = 1 end
-		for k,_ in pairs(b) do keys[k] = 1 end
+--		local keys = {}
+--		for k,_ in pairs(a) do keys[k] = 1 end
+--		for k,_ in pairs(b) do keys[k] = 1 end
 
-		for k,_ in pairs(keys) do
+		for k,_ in pairs(keys(a, b)) do
 			if(not are_the_same(a[k], b[k])) then return false end
 		end
 	else
@@ -203,6 +214,38 @@ function get_node(path, t)
 	return t
 end
 
+function parent_and_node(path, t)
+	local parent, node = string.match(path, "^(.*)/([^/]+)$")
+	return parent, node
+end
+
+--
+-- find any aliases that are contained within the specified
+-- path child structure.
+--
+function each_contained_alias(path, mc, aliases)
+	if(path) then
+		aliases = {}
+		mc = get_node(path, CONFIG.master)
+	end
+
+	if(mc._alias) then 
+		aliases[mc._alias] = 1
+	else 
+		for _,k in pairs(mc._containers) do
+			each_contained_alias(nil, mc[k], aliases)
+		end
+	end
+
+	if(path) then
+		local last
+		return function()
+			last = next(aliases, last)
+			return last
+		end
+	end
+end
+
 --
 -- delete just removes a whole chunk from a config
 --
@@ -213,14 +256,19 @@ function delete_node(path)
 		return
 	end
 
-	local parent, node = string.match(path, "^(.*)/([^/]+)$")
-	local p = get_node(parent, CONFIG.delta)
-	if(not p) then
+	-- if we contain aliases, then delete them too
+	for alias in each_contained_alias(path) do
+		delete_node(alias)
+	end
+
+	local parent, node = parent_and_node(path)
+	local pc = get_node(parent, CONFIG.delta)
+	if(not pc) then
 		print("PARENT PATH DOES NOT EXIST for: "..path)
 		return 
 	end
 
-	p[node] = nil
+	pc[node] = nil
 
 	-- remove any empty lists
 	clean_table(CONFIG.delta)
@@ -237,6 +285,8 @@ function revert_node(path)
 		return
 	end
 
+	-- TODO: handle aliases (as per delete)
+
 	local ac = get_node(path, CONFIG.active)
 
 	-- if not present in the original, then we delete it...
@@ -252,7 +302,6 @@ function revert_node(path)
 	-- remove any empty lists
 	clean_table(CONFIG.delta)
 end
-
 
 --
 -- dump a table for debugging
@@ -290,12 +339,12 @@ end
 --
 function each_container(a, b, m)
 	-- build list of containers from a and b... work out if they are wildcards...
-	local keys = {}
+--	local keys = {}
 	local wildcards = {}
 	local clist = {}
-	if(a) then for k,_ in pairs(a) do keys[k] = 1 end end
-	if(b) then for k,_ in pairs(b) do keys[k] = 1 end end
-	for k,_ in pairs(keys) do 
+--	if(a) then for k,_ in pairs(a) do keys[k] = 1 end end
+--	if(b) then for k,_ in pairs(b) do keys[k] = 1 end end
+	for k,_ in pairs(keys(a, b)) do 
 		if(m[k] and not m[k]._type) then	-- container
 			table.insert(clist, k)
 		elseif(not m[k]) then				-- wildcard
@@ -475,6 +524,8 @@ function show_config(a, b, master, indent, parent)
 		local bv = b and b[k]
 		local mt = master and (master[k] or master["*"])
 
+		if(mt._alias) then mt = mt._alias_mc end
+
 		if(av and not bv) then mode = "-" end
 		if(bv and not av) then mode = "+" end
 
@@ -595,6 +646,8 @@ function read_config(filename, master, file)
 	-- close the file if we are the top level
 	if(filename) then file:close() end
 
+	-- TODO: process aliases
+
 	return rc
 end
 
@@ -612,6 +665,12 @@ function prepare_master(m, parent_name)
 	--
 	if(not m["comment"]) then
 		m["comment"] = { _type = "list/string", _no_exec = 1 }
+	end
+
+	-- if we are an alias, then just prep then return
+	if(m._alias) then
+		m._alias_mc = get_node(m._alias, CONFIG.master)
+		return
 	end
 
 	--
@@ -671,11 +730,19 @@ end
 -- i.e. partial changes do not happen
 --
 function set_config(path, items)
+	local alias_src
+
 	-- first check the node is valid...
 	local mc = get_node(path, CONFIG.master)
 	if(not mc or mc._type) then
 		print("INVALID PATH: " .. path)
 		return false
+	end
+
+	if(mc._alias) then
+		-- TODO: keep original path so we can copy over!
+		mc = get_node(path, CONFIG.master)
+		alias_src = path
 	end
 
 	-- now check each of the fields are valid
@@ -689,7 +756,7 @@ function set_config(path, items)
 
 	-- make sure we have supporting strucure and
 	-- create the node if needed
-	local ac = make_path(path, CONFIG.delta)
+	local dc = make_path(path, CONFIG.delta)
 
 	-- now we can set each field...
 	for k,v in pairs(items) do
@@ -697,18 +764,102 @@ function set_config(path, items)
 
 		-- if we are an empty string then remove (lists will be cleaned anyway)
 		if(type(v) == "string" and v == "") then
-			ac[k] = nil
+			dc[k] = nil
 		elseif(ftype:sub(1, 5) == "list/") then
-			ac[k] = copy_table(v)
+			dc[k] = copy_table(v)
 		elseif(ftype:sub(1, 5) == "file/") then
 			-- TODO: read file
 		else
-			ac[k] = v
+			dc[k] = v
 		end
 	end
-	-- remove and empty lists
+
+	-- copy our alias stuff into the other place
+	if(alias_src) then
+		local parent, node = parent_and_node(alias_src)
+		local dca = make_path(parent, CONFIG.delta)
+		dca[node] = copy_table(v)
+	end
+
+	-- remove any empty lists
 	clean_table(CONFIG.delta)
 end
+
+
+function only_non_exec_diffs(ac, dc, mc)
+	for k,v in pairs(mc) do
+		local av = ac and ac[k]
+		local dv = dc and dc[k]
+		local mv = mc and (mc[k] or mc["*"])
+
+		if(type(mv) == "table") then
+			if(mv._type) then
+				if(not are_the_same(av, dv) and not mv._no_exec) then return false end
+			else
+				if(not only_non_exec_diffs(av, dv, mv)) then return false end
+			end
+		end
+	end
+end
+
+--
+-- Committing th delta means dealing with normal changes, non-exec changes
+-- and also the virtual nodes, so we'll walk the master tree so we can catch
+-- virtual stuff, and anything that has been deleted
+--
+function commit_delta(ac, dc, mc, path)
+	ac = ac or CONFIG.active
+	dc = dc or CONFIG.delta
+	mc = mc or CONFIG.master
+	path = path or ""
+
+	print("PATH is: "..path)
+
+	for k in pairs(keys(ac, dc, mc)) do
+		if(k == "*" or k:sub(1,1) == "_") then goto continue end
+		
+		local av = ac and ac[k]
+		local dv = dc and dc[k]
+		local mv = mc and (mc[k] or mc["*"])
+
+		-- we only want containers
+		if(type(mv) ~= "table" or mv._type) then goto continue end
+
+		print("k is = " ..k)
+
+		-- we need active or delta to do anything
+		print("1")
+		if(not av and not dv) then goto continue end
+
+		-- if we don't have any differences then there is nothing to do
+		print("2")
+		if(are_the_same(av, dv)) then goto continue end
+
+		-- if the differences are only non-exec then we can just apply
+		print("3")
+		if(only_non_exec_diffs(av, dv, mv)) then
+			print("NON EXEC DIFFS ONLY")
+			ac[k] = dc[k] and copy_table(dc[k])
+			goto continue
+		end
+
+		print("4")
+		-- we know we have diffs here now, if we have a function then exec
+		if(mv._function) then
+			print("WOULD EXEC FOR: "..path .. "/" ..k)
+
+			ac[k] = dc[k] and copy_table(dc[k])
+			-- TODO: if virtual node, then put results back
+			goto continue
+		end
+
+		-- changes are present, but no function, so we need to recurse
+		commit_delta(av, dv, mv, path .. "/" .. k)
+
+::continue::
+	end
+end
+
 
 
 
@@ -718,22 +869,27 @@ CONFIG.delta = copy_table(CONFIG.active)
 print(show_config(CONFIG.active, CONFIG.delta, CONFIG.master))
 print("-----")
 --revert_node("/dhcp/a/fred")
-set_config("/dhcp/a", { fred="", comment={ "", "new item", "" }})
-set_config("/dhcp/b", { fred="" })
-
+delete_node("/dhcp")
 print(show_config(CONFIG.active, CONFIG.delta, CONFIG.master))
---print(dump_config(one, master))
+--set_config("/dhcp/a", { fred="", comment={ "", "new item", "" }})
+--set_config("/dhcp/b", { fred="" })
+
+--print(show_config(CONFIG.active, CONFIG.delta, CONFIG.master))
+--commit_delta()
+--print("=====")
+--print(show_config(CONFIG.active, CONFIG.delta, CONFIG.master))
+--dump(CONFIG.delta)
 
 --x = read_config("sample", master)
 --print(dump_config(x, master))
 
-a = { "one", "two", "three", { x=1, y=2 } }
-b = { "one", "two", "three", { y=2, x=1 } }
+--a = { "one", "two", "three", { x=1, y=2 } }
+--b = { "one", "two", "three", { y=2, x=1 } }
 --b = { "six", "two", "eight", "three" }
 --a = {} 
 
 --list_compare(a, b)
 
-print(tostring(are_the_same(a, b)))
+--print(tostring(are_the_same(a, b)))
 
 
