@@ -397,8 +397,7 @@ end
 -- are iterated in _order order, with wildcards alphabetically
 --
 function each_container(a, b, m)
-	local wildcards = {}
-	local clist = {}
+	local wildcards, clist = {}, {}
 
 	for k,_ in pairs(keys(a, b)) do 
 		if(m[k] and not m[k]._type) then	-- container
@@ -436,8 +435,7 @@ end
 -- any items from b that are added, and then the matching item.
 --
 function list_first_match(a, b)
-	local added = {}
-	local removed = {}
+	local added, removed = {}, {}
 	local matched = nil
 
 	while(b[1]) do
@@ -627,7 +625,7 @@ end
 -- a slightly different format.
 --
 function dump_config(a, master, orig_a, indent)
-	-- build our three internal variables
+	-- build our internal variables
 	master = master or CONFIG.master
 	orig_a = orig_a or a
 	indent = indent or 0
@@ -645,7 +643,6 @@ function dump_config(a, master, orig_a, indent)
 		if(mt._hidden) then goto continue end
 		if(mt._alias) then 
 			mt, av = get_nodes(mt._alias, orig_a) 
-			dump(av)
 		end
 		
 		rc = rc .. op(" ", indent, k, "{")
@@ -660,12 +657,14 @@ end
 -- We need to be able to load a config back in from a file
 -- containing a dump.
 --
-function read_config(filename, master, file)
+function read_config(filename, master, file, aliases)
 	local rc = {}
 	local line
 
 	-- file is internal, for our recursion
 	if(not file) then
+		master = CONFIG.master
+		aliases = {}
 		file = io.open(filename)
 		-- TODO: handle errors
 	end
@@ -683,18 +682,22 @@ function read_config(filename, master, file)
 		-- look for a section start
 		local sec = string.match(line, "^%s*([^%s]+)%s+{$")
 		if(sec) then
+			-- find our mc, and one to pass to recursion (cater for aliases)
 			local mc = master and (master[sec] or master["*"])
-			local ac
+			local mcc = (mc and mc._alias and get_nodes(mc._alias)) or mc
 
-			-- TODO: aliases ... probably best bet is to record each
-			--                   alias that we go past so that we can
-			--                   come back and process each one. We cant
-			--                   do it here because we might overwrite
-			--                   the structure
+			-- read the new section
+			local ac = read_config(nil, mcc, file, aliases)
 
-			-- read a new section, but only fill in if master is valid
-			ac = read_config(nil, mc, file)
-			if(mc) then rc[sec] = ac end
+			if(mc) then
+				-- for aliases, create the stub and keep the data safe for later
+				if(mc._alias) then
+					aliases[mc._alias] = ac
+					rc[sec] = { STUB = 1 }
+				else
+					rc[sec] = ac 
+				end
+			end
 		else
 			-- this should be a field...
 			local key, value = string.match(line, "^%s*([^%s]+)%s+(.*)$")
@@ -737,10 +740,16 @@ function read_config(filename, master, file)
 ::continue::
 	end
 
-	-- close the file if we are the top level
-	if(filename) then file:close() end
+	-- if we are the top level, close the file and process any aliases
+	if(filename) then 
+		file:close() 
 
-	-- TODO: process aliases
+		for path,v in pairs(aliases) do
+			local parent, node = parent_and_node(path)
+			local ac = make_path(parent, rc)
+			ac[node] = v
+		end
+	end
 
 	return rc
 end
@@ -768,8 +777,7 @@ function prepare_master(m, parent_name)
 	-- now build a list of what we have in this node, and recurse
 	-- at the same time...
 	--
-	local fields = {}
-	local containers = {}
+	local fields, containers = {}, {}
 
 	for k,mv in pairs(m) do
 		if(k:sub(1, 1) == "_") then goto continue end
@@ -791,8 +799,7 @@ function prepare_master(m, parent_name)
 	table.sort(fields)
 	table.sort(containers)
 	local order = m._order or {}
-	local flist = {}
-	local clist = {}
+	local flist, clist = {}, {}
 
 	if(not is_in_list(order, "comment")) then table.insert(order, 1, "comment") end
 
@@ -911,7 +918,6 @@ function commit_delta(ac, dc, mc, path)
 
 		-- we only want containers
 		if(type(mv) ~= "table" or mv._type) then goto continue end
-
 		print("k is = " ..k)
 
 		-- we need active or delta to do anything
@@ -921,6 +927,12 @@ function commit_delta(ac, dc, mc, path)
 		-- if we don't have any differences then there is nothing to do
 		print("2")
 		if(are_the_same(av, dv)) then goto continue end
+
+		-- if we are an alias, then we must copy the state over
+		if(mv._alias) then
+			ac[k] = dc[k]
+			goto continue
+		end
 
 		-- if the differences are only non-exec then we can just apply
 		print("3")
@@ -955,32 +967,35 @@ prepare_master()
 --a, b = get_real_path("/dns/abc")
 --print("path="..a.."   stub="..b)
 --os.exit(1)
-
+--[[
 CONFIG.delta = copy_table(CONFIG.active)
-print(show_config("/"))
-print("-----")
 
 --revert_node("/dhcp/a/fred")
 --delete_node("/dhcp")
 set_config("/dns/abc", { yes="HELLO", comment={ "", "new item", "" }})
 set_config("/dhcp", { blah = 1 })
 set_config("/dhcp/one", { fred = 45 })
-revert_node("/dhcp")
 
-print(show_config("/"))
 --set_config("X", { fred="" })
 --
+commit_delta()
+print(dump_config(CONFIG.active))
+
+--delete_node("/dns")
+--commit_delta()
+
 print("XXX")
-print(dump_config(CONFIG.delta, CONFIG.master))
+--print(dump_config(CONFIG.active))
+--dump(CONFIG.active)
 
 --print(show_config(CONFIG.active, CONFIG.delta, CONFIG.master))
---commit_delta()
 --print("=====")
 --print(show_config(CONFIG.active, CONFIG.delta, CONFIG.master))
 --dump(CONFIG.delta)
-
---x = read_config("sample", master)
---print(dump_config(x, master))
+]]--
+x = read_config("sample")
+dump(x)
+print(dump_config(x))
 
 --a = { "one", "two", "three", { x=1, y=2 } }
 --b = { "one", "two", "three", { y=2, x=1 } }
