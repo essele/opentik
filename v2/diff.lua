@@ -267,16 +267,8 @@ function get_real_path(path)
 end
 
 --
--- get node will find the given node in the structure
--- (support the wildcards)
+-- given a path, separate out into the parent and node
 --
-function get_node(path, t)
-	for key in string.gmatch(path, "([^/]+)") do
-		t = t and (t[key] or t["*"])
-	end
-	return t
-end
-
 function parent_and_node(path, t)
 	local parent, node = string.match(path, "^(.*)/([^/]+)$")
 	return parent, node
@@ -292,14 +284,11 @@ function each_contained_alias(path, mc, aliases)
 		aliases = {}
 		-- use parent and key otherwise we will follow the link
 		mc,key = get_parent_nodes(path)
-		print("ECA: path="..path.." mc="..tostring(mc).." key="..key)
-		-- TODO: what if not mc
 		mc = mc and mc[key]
 	end
 
 	-- the main check and recurse bit
 	if(mc._alias) then 
-		print("alias found: " .. mc._alias)
 		aliases[mc._alias] = 1
 	else 
 		for _,k in pairs(mc._containers) do
@@ -329,13 +318,10 @@ function delete_node(path)
 
 	-- if we contain aliases, then delete them too
 	for alias in each_contained_alias(path) do
-		print("DELETING ALIAS: " .. alias)
 		delete_node(alias)
 	end
 
 	local _,key,dc = get_parent_nodes(path, CONFIG.delta)
---	local parent, node = parent_and_node(path)
---	local pc = get_node(parent, CONFIG.delta)
 	if(not dc) then
 		print("PARENT PATH DOES NOT EXIST for: "..path)
 		return 
@@ -360,20 +346,16 @@ function revert_node(path)
 
 	-- if we contain aliases, then delete them too
 	for alias in each_contained_alias(path) do
-		print("DELETING ALIAS: " .. alias)
 		revert_node(alias)
 	end
-	-- TODO: user get_nodes
-	local ac = get_node(path, CONFIG.active)
 
-	-- if not present in the original, then we delete it...
+	-- find the original, if not present then delete from delta
+	local _,ac = get_nodes(path, CONFIG.active)
 	if(not ac) then return delete_node(path) end
 
 	-- now make sure we have the parent structure, and copy...
-	local parent, node = string.match(path, "^(.*)/([^/]+)$")
-	print("parent=["..parent.."] node=["..tostring(node).."]")
+	local parent, node = parent_and_node(path)
 	local p = make_path(parent, CONFIG.delta)
-
 	p[node] = (type(ac) == "table" and copy_table(ac)) or ac
 
 	-- remove any empty lists
@@ -977,10 +959,6 @@ prepare_master()
 CONFIG.delta = copy_table(CONFIG.active)
 print(show_config("/"))
 print("-----")
-
-for k in each_contained_alias("/dhcp") do
-	print(">> " ..k)
-end
 
 --revert_node("/dhcp/a/fred")
 --delete_node("/dhcp")
