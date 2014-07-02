@@ -40,7 +40,7 @@ CONFIG.master = {
 				_type = "list/ipv4"
 			},
 			["billy"] = {
-				_type = "file/binary"
+				_type = "file/text"
 			},
 			["abc"] = {
 				["yes"] = {
@@ -491,6 +491,7 @@ function show_file(mode, ftype, k, value, indent, dump)
 			if(not dump) then
 				lc = lc + 1
 				if(lc >= 4) then
+					-- TODO: show how many lines total? maybe not.
 					rc = rc .. op(mode, indent+4, "... <more>")
 					break
 				end
@@ -843,6 +844,17 @@ function set_config(path, items)
 			print("FIELD INVALID: " .. k)
 			return false
 		end
+
+		-- if we are a file then check we can open it
+		if(mc[k]._type:sub(1,5) == "file/" and v) then
+			local file = io.open(v)
+			if(not file) then
+				print("invalid file: " .. v)
+				return false
+			end
+			file:close()
+		end
+
 		-- TODO: field validation
 	end
 
@@ -858,14 +870,15 @@ function set_config(path, items)
 
 		-- if we are an empty string then remove (lists will be cleaned anyway)
 		if(type(v) == "string" and v == "") then
-			dc[k] = nil
+			v = nil
 		elseif(ftype:sub(1, 5) == "list/") then
-			dc[k] = v[1] and copy_table(v)		-- remove empty lists
+			v = v[1] and copy_table(v)		-- v[1] removes empty lists
 		elseif(ftype:sub(1, 5) == "file/") then
-			-- TODO: read file
-		else
-			dc[k] = v
+			local file = io.open(v)
+			v = file:read("*a")
+			file:close()
 		end
+		dc[k] = v
 	end
 
 	-- create the stub if we have an aliases node with some content
@@ -967,7 +980,7 @@ prepare_master()
 --a, b = get_real_path("/dns/abc")
 --print("path="..a.."   stub="..b)
 --os.exit(1)
---[[
+--
 CONFIG.delta = copy_table(CONFIG.active)
 
 --revert_node("/dhcp/a/fred")
@@ -975,11 +988,12 @@ CONFIG.delta = copy_table(CONFIG.active)
 set_config("/dns/abc", { yes="HELLO", comment={ "", "new item", "" }})
 set_config("/dhcp", { blah = 1 })
 set_config("/dhcp/one", { fred = 45 })
+set_config("/dns", { billy = "/etc/passwd" })
 
 --set_config("X", { fred="" })
 --
-commit_delta()
-print(dump_config(CONFIG.active))
+--commit_delta()
+print(show_config("/"))
 
 --delete_node("/dns")
 --commit_delta()
@@ -992,10 +1006,10 @@ print("XXX")
 --print("=====")
 --print(show_config(CONFIG.active, CONFIG.delta, CONFIG.master))
 --dump(CONFIG.delta)
-]]--
-x = read_config("sample")
-dump(x)
-print(dump_config(x))
+
+--x = read_config("sample")
+--dump(x)
+--print(dump_config(x))
 
 --a = { "one", "two", "three", { x=1, y=2 } }
 --b = { "one", "two", "three", { y=2, x=1 } }
