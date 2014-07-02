@@ -62,30 +62,40 @@ CONFIG.master = {
 			["blah2"] = { _type = "xy" }
 		},
 	},
-	["x"] = { _type = "xx" }
+	["lee"] = { 
+		["X"] = { _type = "xx" }
+	}
 }
 
 CONFIG.active = {
-	["dns"] = {
-		resolvers = { "one", "two", "three" },
-		billy = "hello herskjhfglskjhfg sdlfkjghs dflgkjhds flkjghds lfkghsdlkfjghsldkfjg sdlkfhg sdlkfhg sldkjfg lsdkfjhg lsdkfjhg sldkhfg lsdkfg lsdkfjhg sldkfjhgs ldkfjgh lskdfhg lskdfjhgl ksdfhgl sdkfhg lskdfhg lskdhfgl ksdjfg lkjsdadflkjhdlkjha dlfkjhas ldkjfhas ldkjfhal skdjfh laskjdhfl aksdjf laskdjf lasjdkhfl asdhfla ksdjf lasjdf lasdjf laskf laskjflaksjdhf laskjdhf lasjkdhfl aksjdhf laksjdhf laskdh lfkjasdff g",
-		abc = {
-			yes = 1, no = 2
-		}
-	},
-	["dhcp"] = {
-		["a"] = {
+--	["Xdns"] = { STUB = 1 },
+--	["dhcp"] = { STUB = 1 },
+--[[
+	["dnsmasq"] = {
+		["dns"] = {
+			resolvers = { "one", "two", "three" },
+			billy = "hello herskjhfglskjhfg sdlfkjghs dflgkjhds flkjghds lfkghsdlkfjghsldkfjg sdlkfhg sdlkfhg sldkjfg lsdkfjhg lsdkfjhg sldkhfg lsdkfg lsdkfjhg sldkfjhgs ldkfjgh lskdfhg lskdfjhgl ksdfhgl sdkfhg lskdfhg lskdhfgl ksdjfg lkjsdadflkjhdlkjha dlfkjhas ldkjfhas ldkjfhal skdjfh laskjdhfl aksdjf laskdjf lasjdkhfl asdhfla ksdjf lasjdf lasdjf laskf laskjflaksjdhf laskjdhf lasjkdhfl aksjdhf laksjdhf laskdh lfkjasdff g",
+			abc = {
+				yes = 1, no = 2
+			}
+		},
+		["dhcp"] = {
+			["a"] = {
 			fred = 1,
-			bill = 2,
-			comment = { "one", "two", "", "four big long comment line" }
+				bill = 2,
+				comment = { "one", "two", "", "four big long comment line" }
+			},
+			["b"] = {
+				fred = 50
+			},
+			["blah"] = 45,
+			["blah2"] = "ab"
 		},
-		["b"] = {
-			fred = 50
-		},
-		["blah"] = 45,
-		["blah2"] = "ab"
 	},
-	["x"]= 1
+]]--
+	["lee"] = {
+		["X"]= 1
+	}
 }
 
 --
@@ -204,6 +214,60 @@ function make_path(path, t)
 end
 
 --
+-- get nodes will find the given node in all three configs
+-- it supports wildcards and aliases
+--
+function get_nodes(path)
+	local ac, dc, mc = CONFIG.active, CONFIG.delta, CONFIG.master
+	
+	for key in string.gmatch(path, "([^/]+)") do
+		mc = mc and (mc[key] or mc["*"])		-- support wildcards
+		if(not mc) then return end
+
+		if(mc._alias) then						-- support aliases
+			ac, dc, mc = get_nodes(mc._alias)
+		else
+			ac = ac and ac[key]
+			dc = dc and dc[key]
+		end
+	end
+	return ac, dc, mc
+end
+function get_parent_nodes(path)
+	local parent, key = string.match(path, "^(.*)/([^/]+)$")
+	local ac, dc, mc = get_nodes(parent)
+	return ac, dc, mc, key
+end
+
+--
+-- If we have an alias in the path then our real path is different
+--
+function get_real_path(path)
+	local mc = CONFIG.master
+	local rc = path
+	local cwd = ""
+	local stub
+
+	if(path == "/") then return "/" end
+
+	while(#path > 0) do
+		local key = path:match("^/?([^/]+)")
+		path = path:gsub("^/([^/]+)", "")
+		cwd = cwd .. "/" .. key
+
+		mc = mc and (mc[key] or mc["*"])
+		if(not mc) then return nil end
+
+		if(mc._alias) then
+			stub = cwd
+			rc = mc._alias .. path
+			_,_,mc = get_nodes(mc._alias)
+		end
+	end
+	return rc, stub
+end
+
+--
 -- get node will find the given node in the structure
 -- (support the wildcards)
 --
@@ -224,12 +288,18 @@ end
 -- path child structure.
 --
 function each_contained_alias(path, mc, aliases)
+	-- initialise if path is set
 	if(path) then
 		aliases = {}
-		mc = get_node(path, CONFIG.master)
+		-- use parent and key otherwise we will follow the link
+		_,_,mc,key = get_parent_nodes(path)
+		-- TODO: what if not mc
+		mc = mc and mc[key]
 	end
 
+	-- the main check and recurse bit
 	if(mc._alias) then 
+		print("alias found: " .. mc._alias)
 		aliases[mc._alias] = 1
 	else 
 		for _,k in pairs(mc._containers) do
@@ -237,6 +307,7 @@ function each_contained_alias(path, mc, aliases)
 		end
 	end
 
+	-- return the iterator function
 	if(path) then
 		local last
 		return function()
@@ -258,17 +329,19 @@ function delete_node(path)
 
 	-- if we contain aliases, then delete them too
 	for alias in each_contained_alias(path) do
+		print("DELETING ALIAS: " .. alias)
 		delete_node(alias)
 	end
 
-	local parent, node = parent_and_node(path)
-	local pc = get_node(parent, CONFIG.delta)
-	if(not pc) then
+	local _,dc,_,key = get_parent_nodes(path)
+--	local parent, node = parent_and_node(path)
+--	local pc = get_node(parent, CONFIG.delta)
+	if(not dc) then
 		print("PARENT PATH DOES NOT EXIST for: "..path)
 		return 
 	end
 
-	pc[node] = nil
+	dc[key] = nil
 
 	-- remove any empty lists
 	clean_table(CONFIG.delta)
@@ -285,7 +358,11 @@ function revert_node(path)
 		return
 	end
 
-	-- TODO: handle aliases (as per delete)
+	-- if we contain aliases, then delete them too
+	for alias in each_contained_alias(path) do
+		print("DELETING ALIAS: " .. alias)
+		revert_node(alias)
+	end
 
 	local ac = get_node(path, CONFIG.active)
 
@@ -338,12 +415,9 @@ end
 -- are iterated in _order order, with wildcards alphabetically
 --
 function each_container(a, b, m)
-	-- build list of containers from a and b... work out if they are wildcards...
---	local keys = {}
 	local wildcards = {}
 	local clist = {}
---	if(a) then for k,_ in pairs(a) do keys[k] = 1 end end
---	if(b) then for k,_ in pairs(b) do keys[k] = 1 end end
+
 	for k,_ in pairs(keys(a, b)) do 
 		if(m[k] and not m[k]._type) then	-- container
 			table.insert(clist, k)
@@ -524,7 +598,11 @@ function show_config(a, b, master, indent, parent)
 		local bv = b and b[k]
 		local mt = master and (master[k] or master["*"])
 
-		if(mt._alias) then mt = mt._alias_mc end
+		if(mt._alias) then 
+			rc = rc .. "GOT ALIASE: " .. mt._alias .. "\n"
+			av, bv, mt = get_nodes(mt._alias)
+			rc = rc .. "av="..tostring(av).." bv="..tostring(bv).." mt="..tostring(mt) .. "\n"
+		end
 
 		if(av and not bv) then mode = "-" end
 		if(bv and not av) then mode = "+" end
@@ -561,6 +639,9 @@ function dump_config(a, master, indent)
 	-- now the containers
 	for k in each_container(a, nil, master) do
 		local mt = master and (master[k] or master["*"])
+
+		-- TODO: support alias and hidden
+
 		rc = rc .. op(" ", indent, k, "{")
 				.. dump_config(a[k], mt, indent+4)
 				.. op(" ", indent, "}")
@@ -667,11 +748,8 @@ function prepare_master(m, parent_name)
 		m["comment"] = { _type = "list/string", _no_exec = 1 }
 	end
 
-	-- if we are an alias, then just prep then return
-	if(m._alias) then
-		m._alias_mc = get_node(m._alias, CONFIG.master)
-		return
-	end
+	-- if we are an alias, then just return
+	if(m._alias) then return end
 
 	--
 	-- now build a list of what we have in this node, and recurse
@@ -730,19 +808,13 @@ end
 -- i.e. partial changes do not happen
 --
 function set_config(path, items)
-	local alias_src
+	local stub
 
 	-- first check the node is valid...
-	local mc = get_node(path, CONFIG.master)
+	local _,_,mc = get_nodes(path)
 	if(not mc or mc._type) then
 		print("INVALID PATH: " .. path)
 		return false
-	end
-
-	if(mc._alias) then
-		-- TODO: keep original path so we can copy over!
-		mc = get_node(path, CONFIG.master)
-		alias_src = path
 	end
 
 	-- now check each of the fields are valid
@@ -754,7 +826,9 @@ function set_config(path, items)
 		-- TODO: field validation
 	end
 
-	-- make sure we have supporting strucure and
+	path, stub = get_real_path(path)		-- cope with aliases
+	
+	-- make sure we have supporting structure and
 	-- create the node if needed
 	local dc = make_path(path, CONFIG.delta)
 
@@ -766,7 +840,7 @@ function set_config(path, items)
 		if(type(v) == "string" and v == "") then
 			dc[k] = nil
 		elseif(ftype:sub(1, 5) == "list/") then
-			dc[k] = copy_table(v)
+			dc[k] = v[1] and copy_table(v)		-- remove empty lists
 		elseif(ftype:sub(1, 5) == "file/") then
 			-- TODO: read file
 		else
@@ -774,11 +848,11 @@ function set_config(path, items)
 		end
 	end
 
-	-- copy our alias stuff into the other place
-	if(alias_src) then
-		local parent, node = parent_and_node(alias_src)
+	-- create the stub if we have an aliases node with some content
+	if(stub and next(dc)) then
+		local parent, node = parent_and_node(stub)
 		local dca = make_path(parent, CONFIG.delta)
-		dca[node] = copy_table(v)
+		dca[node] = { STUB = 1 }
 	end
 
 	-- remove any empty lists
@@ -865,14 +939,24 @@ end
 
 prepare_master()
 
+--a, b = get_real_path("/dns/abc")
+--print("path="..a.."   stub="..b)
+--os.exit(1)
+
 CONFIG.delta = copy_table(CONFIG.active)
 print(show_config(CONFIG.active, CONFIG.delta, CONFIG.master))
 print("-----")
+
+for k in each_contained_alias("/dhcp") do
+	print(">> " ..k)
+end
+
 --revert_node("/dhcp/a/fred")
-delete_node("/dhcp")
+--delete_node("/dhcp")
+--revert_node("/dhcp")
+set_config("/dns/abc", { yes="HELLO", comment={ "", "new item", "" }})
 print(show_config(CONFIG.active, CONFIG.delta, CONFIG.master))
---set_config("/dhcp/a", { fred="", comment={ "", "new item", "" }})
---set_config("/dhcp/b", { fred="" })
+--set_config("X", { fred="" })
 
 --print(show_config(CONFIG.active, CONFIG.delta, CONFIG.master))
 --commit_delta()
@@ -892,4 +976,5 @@ print(show_config(CONFIG.active, CONFIG.delta, CONFIG.master))
 
 --print(tostring(are_the_same(a, b)))
 
+dump(CONFIG.delta)
 
