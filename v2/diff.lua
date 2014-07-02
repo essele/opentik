@@ -33,6 +33,7 @@ CONFIG.master = {
 	["dns"] = { _alias = "/dnsmasq/dns" },
 	["dhcp"] = { _alias = "/dnsmasq/dhcp" },
 	["dnsmasq"] = {
+		_hidden = 1,
 		_function = function() print("FCALL") end,
 		["dns"] = {
 			["resolvers"] = {
@@ -167,10 +168,6 @@ function are_the_same(a, b)
 	if(type(a) ~= type(b)) then return false end
 
 	if(type(a) == "table") then
---		local keys = {}
---		for k,_ in pairs(a) do keys[k] = 1 end
---		for k,_ in pairs(b) do keys[k] = 1 end
-
 		for k,_ in pairs(keys(a, b)) do
 			if(not are_the_same(a[k], b[k])) then return false end
 		end
@@ -217,26 +214,28 @@ end
 -- get nodes will find the given node in all three configs
 -- it supports wildcards and aliases
 --
-function get_nodes(path)
-	local ac, dc, mc = CONFIG.active, CONFIG.delta, CONFIG.master
-	
+function get_nodes(path, a, b)
+	local mc = CONFIG.master
+	a = a or CONFIG.active
+	b = b or CONFIG.delta
+
 	for key in string.gmatch(path, "([^/]+)") do
 		mc = mc and (mc[key] or mc["*"])		-- support wildcards
 		if(not mc) then return end
 
 		if(mc._alias) then						-- support aliases
-			ac, dc, mc = get_nodes(mc._alias)
+			mc, a, b = get_nodes(mc._alias)
 		else
-			ac = ac and ac[key]
-			dc = dc and dc[key]
+			a = a and a[key]
+			b = b and b[key]
 		end
 	end
-	return ac, dc, mc
+	return mc, a, b
 end
-function get_parent_nodes(path)
+function get_parent_nodes(path, a, b)
 	local parent, key = string.match(path, "^(.*)/([^/]+)$")
-	local ac, dc, mc = get_nodes(parent)
-	return ac, dc, mc, key
+	local mc, a, b = get_nodes(parent, a, b)
+	return mc, key, a, b
 end
 
 --
@@ -261,7 +260,7 @@ function get_real_path(path)
 		if(mc._alias) then
 			stub = cwd
 			rc = mc._alias .. path
-			_,_,mc = get_nodes(mc._alias)
+			mc = get_nodes(mc._alias)
 		end
 	end
 	return rc, stub
@@ -292,7 +291,8 @@ function each_contained_alias(path, mc, aliases)
 	if(path) then
 		aliases = {}
 		-- use parent and key otherwise we will follow the link
-		_,_,mc,key = get_parent_nodes(path)
+		mc,key = get_parent_nodes(path)
+		print("ECA: path="..path.." mc="..tostring(mc).." key="..key)
 		-- TODO: what if not mc
 		mc = mc and mc[key]
 	end
@@ -333,7 +333,7 @@ function delete_node(path)
 		delete_node(alias)
 	end
 
-	local _,dc,_,key = get_parent_nodes(path)
+	local _,key,dc = get_parent_nodes(path, CONFIG.delta)
 --	local parent, node = parent_and_node(path)
 --	local pc = get_node(parent, CONFIG.delta)
 	if(not dc) then
@@ -363,7 +363,7 @@ function revert_node(path)
 		print("DELETING ALIAS: " .. alias)
 		revert_node(alias)
 	end
-
+	-- TODO: user get_nodes
 	local ac = get_node(path, CONFIG.active)
 
 	-- if not present in the original, then we delete it...
@@ -578,15 +578,33 @@ end
 -- Note that this is not used to save config information, a more
 -- basic (less pretty) output is used.
 --
-function show_config(a, b, master, indent, parent)
-	indent = indent or 0
+-- (a) and (b) are optional, they will default to active, delta.
+--
+function show_config(path, a, b, master, orig_a, orig_b, indent, parent)
 	local rc = ""
+
+	if(path) then
+		-- optional passed variables
+		a = a or CONFIG.active
+		b = b or CONFIG.delta
+
+		-- build our internal variables
+		orig_a = orig_a or a
+		orig_b = orig_b or b
+		indent = indent or 0
+
+		-- prepare the path
+		master, a, b = get_nodes(path, a, b)
+	end
 
 	-- first the fields
 	if(parent and each_field(master)()) then
-		rc = rc .. op(" ", indent, parent, "(settings) {")
+		local mode = " "
+		if(a and not b) then mode = "-" end
+		if(b and not a) then mode = "+" end
+		rc = rc .. op(mode, indent, parent, "(settings) {")
 				.. show_fields(a, b, master, indent+4)
-				.. op(" ", indent, "}")
+				.. op(mode, indent, "}")
 	else
 		rc = rc .. show_fields(a, b, master, indent)
 	end
@@ -598,11 +616,8 @@ function show_config(a, b, master, indent, parent)
 		local bv = b and b[k]
 		local mt = master and (master[k] or master["*"])
 
-		if(mt._alias) then 
-			rc = rc .. "GOT ALIASE: " .. mt._alias .. "\n"
-			av, bv, mt = get_nodes(mt._alias)
-			rc = rc .. "av="..tostring(av).." bv="..tostring(bv).." mt="..tostring(mt) .. "\n"
-		end
+		if(mt._hidden) then goto continue end
+		if(mt._alias) then mt, av, bv = get_nodes(mt._alias, orig_a, orig_b) end
 
 		if(av and not bv) then mode = "-" end
 		if(bv and not av) then mode = "+" end
@@ -610,10 +625,10 @@ function show_config(a, b, master, indent, parent)
 		local label = (mt._label or "") .. k
 
 		if(mt._keep_with_children) then
-			rc = rc .. show_config(av, bv, mt, indent, k)
+			rc = rc .. show_config(nil, av, bv, mt, orig_a, orig_b, indent, k)
 		else
 			rc = rc .. op(mode, indent, label, "{")
-					.. show_config(av, bv, mt, indent+4)
+					.. show_config(nil, av, bv, mt, orig_a, orig_b, indent+4)
 					.. op(mode, indent, "}")
 		end
 ::continue::
@@ -629,8 +644,12 @@ end
 -- The show_fields function has a dump flag which outputs in
 -- a slightly different format.
 --
-function dump_config(a, master, indent)
+function dump_config(a, master, orig_a, indent)
+	-- build our three internal variables
+	master = master or CONFIG.master
+	orig_a = orig_a or a
 	indent = indent or 0
+
 	local rc = ""
 	
 	-- first the fields
@@ -639,12 +658,18 @@ function dump_config(a, master, indent)
 	-- now the containers
 	for k in each_container(a, nil, master) do
 		local mt = master and (master[k] or master["*"])
+		local av = a and a[k]
 
-		-- TODO: support alias and hidden
-
+		if(mt._hidden) then goto continue end
+		if(mt._alias) then 
+			mt, av = get_nodes(mt._alias, orig_a) 
+			dump(av)
+		end
+		
 		rc = rc .. op(" ", indent, k, "{")
-				.. dump_config(a[k], mt, indent+4)
+				.. dump_config(av, mt, orig_a, indent+4)
 				.. op(" ", indent, "}")
+::continue::
 	end
 	return rc
 end
@@ -678,6 +703,12 @@ function read_config(filename, master, file)
 		if(sec) then
 			local mc = master and (master[sec] or master["*"])
 			local ac
+
+			-- TODO: aliases ... probably best bet is to record each
+			--                   alias that we go past so that we can
+			--                   come back and process each one. We cant
+			--                   do it here because we might overwrite
+			--                   the structure
 
 			-- read a new section, but only fill in if master is valid
 			ac = read_config(nil, mc, file)
@@ -811,7 +842,7 @@ function set_config(path, items)
 	local stub
 
 	-- first check the node is valid...
-	local _,_,mc = get_nodes(path)
+	local mc = get_nodes(path)
 	if(not mc or mc._type) then
 		print("INVALID PATH: " .. path)
 		return false
@@ -944,7 +975,7 @@ prepare_master()
 --os.exit(1)
 
 CONFIG.delta = copy_table(CONFIG.active)
-print(show_config(CONFIG.active, CONFIG.delta, CONFIG.master))
+print(show_config("/"))
 print("-----")
 
 for k in each_contained_alias("/dhcp") do
@@ -953,10 +984,16 @@ end
 
 --revert_node("/dhcp/a/fred")
 --delete_node("/dhcp")
---revert_node("/dhcp")
 set_config("/dns/abc", { yes="HELLO", comment={ "", "new item", "" }})
-print(show_config(CONFIG.active, CONFIG.delta, CONFIG.master))
+set_config("/dhcp", { blah = 1 })
+set_config("/dhcp/one", { fred = 45 })
+revert_node("/dhcp")
+
+print(show_config("/"))
 --set_config("X", { fred="" })
+--
+print("XXX")
+print(dump_config(CONFIG.delta, CONFIG.master))
 
 --print(show_config(CONFIG.active, CONFIG.delta, CONFIG.master))
 --commit_delta()
@@ -976,5 +1013,4 @@ print(show_config(CONFIG.active, CONFIG.delta, CONFIG.master))
 
 --print(tostring(are_the_same(a, b)))
 
-dump(CONFIG.delta)
 
