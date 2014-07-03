@@ -63,7 +63,9 @@ CONFIG.master = {
 			["blah2"] = { _type = "xy" }
 		},
 	},
-	["lee"] = { 
+	["lee"] = {
+		_depends = { "/dnsmasq" },
+		_function = function() print("Hello") end,
 		["X"] = { _type = "xx" }
 	}
 }
@@ -764,20 +766,14 @@ end
 --
 function prepare_master(m, parent_name)
 	m = m or CONFIG.master
-	--
+
 	-- make sure we have a definition for comment in every node
-	--
-	if(not m["comment"]) then
-		m["comment"] = { _type = "list/string", _no_exec = 1 }
-	end
+	if(not m.comment) then m.comment = { _type = "list/string", _no_exec = 1 } end
 
 	-- if we are an alias, then just return
 	if(m._alias) then return end
 
-	--
-	-- now build a list of what we have in this node, and recurse
-	-- at the same time...
-	--
+	-- now build a list of what we have in this node, and recurse at the same time...
 	local fields, containers = {}, {}
 
 	for k,mv in pairs(m) do
@@ -794,9 +790,7 @@ function prepare_master(m, parent_name)
 ::continue::
 	end
 
-	--
 	-- now prepare the _fields and _containers ordered lists
-	--
 	table.sort(fields)
 	table.sort(containers)
 	local order = m._order or {}
@@ -910,6 +904,23 @@ function only_non_exec_diffs(ac, dc, mc)
 end
 
 --
+-- See if all of our dependencies are met, or if there are outstanding changes
+-- to be applied
+--
+function dependencies_met(deplist)
+	for _,dep in ipairs(deplist) do
+		local mc, ac, dc = get_nodes(dep)
+		
+		print("Lookng at dep: " .. dep)
+		if(not are_the_same(ac, dc)) then
+			print("FAIL")
+			return false
+		end
+	end
+	return true
+end
+
+--
 -- Committing th delta means dealing with normal changes, non-exec changes
 -- and also the virtual nodes, so we'll walk the master tree so we can catch
 -- virtual stuff, and anything that has been deleted
@@ -920,8 +931,7 @@ function commit_delta(ac, dc, mc, path)
 	mc = mc or CONFIG.master
 	path = path or ""
 
-	print("PATH is: "..path)
-
+	local work_done = false
 	for k in pairs(keys(ac, dc, mc)) do
 		if(k == "*" or k:sub(1,1) == "_") then goto continue end
 		
@@ -931,47 +941,64 @@ function commit_delta(ac, dc, mc, path)
 
 		-- we only want containers
 		if(type(mv) ~= "table" or mv._type) then goto continue end
-		print("k is = " ..k)
 
 		-- we need active or delta to do anything
-		print("1")
 		if(not av and not dv) then goto continue end
 
 		-- if we don't have any differences then there is nothing to do
-		print("2")
 		if(are_the_same(av, dv)) then goto continue end
 
 		-- if we are an alias, then we must copy the state over
 		if(mv._alias) then
 			ac[k] = dc[k]
+			work_done = true
 			goto continue
 		end
 
 		-- if the differences are only non-exec then we can just apply
-		print("3")
 		if(only_non_exec_diffs(av, dv, mv)) then
 			print("NON EXEC DIFFS ONLY")
 			ac[k] = dc[k] and copy_table(dc[k])
+			work_done = true
 			goto continue
 		end
 
-		print("4")
 		-- we know we have diffs here now, if we have a function then exec
 		if(mv._function) then
+			print("DEPCHECK")
+			if(mv._depends and not dependencies_met(mv._depends)) then
+				print("DEPENDENCIES NOT MET, DEFERRING")
+				goto continue
+			end
 			print("WOULD EXEC FOR: "..path .. "/" ..k)
-
 			ac[k] = dc[k] and copy_table(dc[k])
-			-- TODO: if virtual node, then put results back
+			work_done = true
 			goto continue
 		end
 
 		-- changes are present, but no function, so we need to recurse
-		commit_delta(av, dv, mv, path .. "/" .. k)
+		if(commit_delta(av, dv, mv, path .. "/" .. k)) then work_done = true end
 
 ::continue::
 	end
+	return work_done
 end
 
+--
+-- The commit_delta function may need to be called multiple times to ensure
+-- that dependencies are handled properly.
+--
+-- We should call it until we get no work done.
+--
+function commit()
+	while(1) do
+		print("CD")
+		if(not commit_delta()) then
+			print("NO WORK DONE, exiting")
+			break;
+		end
+	end
+end
 
 
 
@@ -989,10 +1016,11 @@ set_config("/dns/abc", { yes="HELLO", comment={ "", "new item", "" }})
 set_config("/dhcp", { blah = 1 })
 set_config("/dhcp/one", { fred = 45 })
 set_config("/dns", { billy = "/etc/passwd" })
+set_config("/lee", { X = 4567 })
 
 --set_config("X", { fred="" })
 --
---commit_delta()
+commit()
 print(show_config("/"))
 
 --delete_node("/dns")
