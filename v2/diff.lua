@@ -226,7 +226,7 @@ function each_contained_alias(path, mc, aliases)
 		aliases = {}
 		-- use parent and key otherwise we will follow the link
 		mc,key = get_parent_nodes(path)
-		mc = mc and mc[key]
+		mc = mc and (mc[key] or mc["*"])
 	end
 
 	-- the main check and recurse bit
@@ -861,15 +861,26 @@ function dependencies_met(deplist)
 end
 
 --
+-- When we need to set the value, if we don't have a current
+-- "ac" then we need to create the structure, or potential delete
+-- it if we assign a nil
+--
+function set_active(ac, path, key, value)
+	ac = ac or make_path(path, CONFIG.active)
+	ac[key] = value
+	if(not value) then clean_table(CONFIG.active) end
+end
+
+--
 -- Committing th delta means dealing with normal changes, non-exec changes
 -- and also the virtual nodes, so we'll walk the master tree so we can catch
 -- virtual stuff, and anything that has been deleted
 --
 function commit_delta(ac, dc, mc, path)
-	ac = ac or CONFIG.active
-	dc = dc or CONFIG.delta
-	mc = mc or CONFIG.master
-	path = path or ""
+	if(not path) then
+		ac, dc, mc = CONFIG.active, CONFIG.delta, CONFIG.master
+		path = ""
+	end
 
 	local work_done = false
 	for k in pairs(keys(ac, dc, mc)) do
@@ -890,7 +901,7 @@ function commit_delta(ac, dc, mc, path)
 
 		-- if we are an alias, then we must copy the state over
 		if(mv._alias) then
-			ac[k] = dc[k]
+			set_active(ac, path, k, dc[k])
 			work_done = true
 			goto continue
 		end
@@ -898,7 +909,7 @@ function commit_delta(ac, dc, mc, path)
 		-- if the differences are only non-exec then we can just apply
 		if(only_non_exec_diffs(av, dv, mv)) then
 			print("NON EXEC DIFFS ONLY")
-			ac[k] = dc[k] and copy_table(dc[k])
+			set_active(ac, path, k, dc[k] and copy_table(dc[k]))
 			work_done = true
 			goto continue
 		end
@@ -911,7 +922,7 @@ function commit_delta(ac, dc, mc, path)
 				goto continue
 			end
 			print("WOULD EXEC FOR: "..path .. "/" ..k)
-			local rc, err = pcall(mv._function, path .. "/" .. k, k, av, dv, mv)
+			local rc, err = pcall(mv._function, path .. "/" .. k, k, { ac=av, dc=dv, mc=mv })
 			if(not rc) then
 				print("Call failed.")
 				print("ERR: " .. err)
@@ -919,12 +930,13 @@ function commit_delta(ac, dc, mc, path)
 				return nil, err
 			end
 
-			ac[k] = dc[k] and copy_table(dc[k])
+			set_active(ac, path, k, dc and dc[k] and copy_table(dc[k]))
 			work_done = true
 			goto continue
 		end
 
 		-- changes are present, but no function, so we need to recurse
+		print("recursing for " .. path .. "/" .. k)
 		local wd, err = commit_delta(av, dv, mv, path .. "/" .. k)
 		if(wd == nil) then return wd, err end
 		if(wd) then work_done = true end
@@ -958,7 +970,6 @@ end
 
 
 prepare_master()
-dump(CONFIG.master)
 
 
 --a, b = get_real_path("/dns/abc")
@@ -981,11 +992,15 @@ set_config("/interface/ethernet/0", { address = "1.2.3.4" })
 commit()
 print(show_config("/"))
 
+delete_node("/interface/ethernet/0")
+--dump(CONFIG.delta)
+commit()
+
 --delete_node("/dns")
 --commit_delta()
 
 print("XXX")
---print(dump_config(CONFIG.active))
+print(dump_config(CONFIG.active))
 --dump(CONFIG.active)
 
 --print(show_config(CONFIG.active, CONFIG.delta, CONFIG.master))

@@ -9,25 +9,93 @@
 local function validator_ip4v_net(v)
 end
 
+
+
+--
+-- api calls
+--
+
+--
+-- At the node level we may be entirely added or removed
+--
+local function is_added(config)
+	local ac, dc = config.ac, config.dc
+
+	if(dc and not ac) then return true end
+	return false
+end
+local function is_deleted(config)
+	local ac, dc = config.ac, config.dc
+
+	if(ac and not dc) then return true end
+	return false
+end
+
+--
+-- For each item (fields and containers) we return an iterator covering
+-- the ones that were added, remove or changed.
+--
+local function each_added(config)
+	local ac, dc = config.ac or {}, config.dc or {}
+	local last
+
+	return function()
+		while(1) do
+			last = next(dc, last)
+			if(not last) then return nil end
+			if(not ac[last]) then return last, dc[last] end
+		end
+	end
+end
+local function each_deleted(config)
+	local ac, dc = config.ac or {}, config.dc or {}
+	local last
+
+	return function()
+		while(1) do
+			last = next(ac, last)
+			if(not last) then return nil end
+			if(not dc[last]) then return last, ac[last] end
+		end
+	end
+end
+local function each_changed(config)
+	local ac, dc = config.ac or {}, config.dc or {}
+	local last
+
+	return function()
+		while(1) do
+			last = next(dc, last)
+			if(not last) then return nil end
+			if(ac[last] and ac[last] ~= dc[last]) then return last, ac[last], dc[last] end
+		end
+	end
+end
+
+
+
+
 --
 -- primary function for handling basic ethernet configuration
 --
 --
-local function cf_ethernet(path, key, node, mnode, nc)
+local function cf_ethernet(path, key, config)
 	print("This is the cf_ethernet function")
 
 	print("PATH="..tostring(path))
+	print("KEY="..tostring(key))
+	dump(config)
 
-
-	for k,v in pairs(nc) do
-		print("  k="..k.." v="..tostring(v))
-	end
+	for key,value in each_added(config) do
+		print("Added key="..key)
+--		dump(value)
+	end	
 
 	-- Option 1: DELETE ... if we are deleting an interface config then
 	-- 			 we need to exit afterwards, we will be called again
 	-- 			 for other operations.
 	--
-	if(node._deleted) then
+	if(is_deleted(config)) then
 		-- unconfigure the interface
 		print("REMOVED INTERFACE " .. "eth" .. key)
 		return true
@@ -36,7 +104,7 @@ local function cf_ethernet(path, key, node, mnode, nc)
 	-- Option 2: ADD ... we have setup a new interface, so this is a simple
 	-- 			 creation with the right parameters
 	--
-	if(node._added) then
+	if(is_added(config)) then
 		print("NEW INTERFACE CREATED " .. "eth" .. key)
 --		error("oh dear")
 		return true
