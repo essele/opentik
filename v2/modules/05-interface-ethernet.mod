@@ -6,15 +6,14 @@
 -- support for ip addresses with a /net number on the end, for
 -- example: 10.2.3.4/24
 --
-function validator_ip4v_net(v)
+local function validator_ip4v_net(v)
 end
-
 
 --
 -- primary function for handling basic ethernet configuration
 --
 --
-function cf_ethernet(path, key, node, mnode, nc)
+local function cf_ethernet(path, key, node, mnode, nc)
 	print("This is the cf_ethernet function")
 
 	print("PATH="..tostring(path))
@@ -65,10 +64,9 @@ CONFIG.master["interface"]["ethernet"] = {
 	--
 	-- main section for instances of ethernet interfaces...
 	--
-	_show_together = 1,
+	_keep_with_children = 1,
 	["*"] = {
 		_function = cf_ethernet,
-		_listmode = "system",
 		_syntax = "handle_eth_syntax",
 		["name"] = {
 			_type = "string"

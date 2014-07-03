@@ -20,20 +20,50 @@
 package.path = "./lib/?.lua"
 package.cpath = "./lib/?.so"
 
+-- global level packages
 require("lfs")
-require("base64")
 require("table_utils")
+
+-- different namespace packages
+local base64 = require("base64")
+
+--
+-- Setup the base config structure
+--
+CONFIG = {}
+CONFIG.master = {}
+CONFIG.delta = {}
+CONFIG.active = {}
+
+--
+-- We look at all of the module files and load each one which should
+-- populate the master table and provide the required types, syntax
+-- checkers and validators
+--
+-- We build a list of modules (*.mod) and the sort them and then dofile
+-- them.
+--
+local modules = {}
+for m in lfs.dir("modules") do
+	if(string.match(m, "^.*%.mod$")) then
+		table.insert(modules, m)
+	end
+end
+table.sort(modules)
+
+for i, m in ipairs(modules) do
+	print("Loading: " .. m)
+	dofile("modules/" .. m)
+end
 
 
 --
 -- Basic lua functions for showing differences between two tables
 --
 
-CONFIG = {}
-CONFIG.master = {
-	["dns"] = { _alias = "/dnsmasq/dns" },
-	["dhcp"] = { _alias = "/dnsmasq/dhcp" },
-	["dnsmasq"] = {
+CONFIG.master["dns"] = { _alias = "/dnsmasq/dns" }
+CONFIG.master["dhcp"] = { _alias = "/dnsmasq/dhcp" }
+CONFIG.master["dnsmasq"] = {
 		_hidden = 1,
 		_function = function() print("FCALL") end,
 		["dns"] = {
@@ -41,7 +71,7 @@ CONFIG.master = {
 				_type = "list/ipv4"
 			},
 			["billy"] = {
-				_type = "file/text"
+				_type = "file/binary"
 			},
 			["abc"] = {
 				["yes"] = {
@@ -63,13 +93,12 @@ CONFIG.master = {
 			["blah"] = { _type = "xx" },
 			["blah2"] = { _type = "xy" }
 		},
-	},
-	["lee"] = {
+	}
+CONFIG.master["lee"] = {
 		_depends = { "/dnsmasq" },
 		_function = function() print("Hello") end,
 		["X"] = { _type = "xx" }
 	}
-}
 
 CONFIG.active = {
 --	["Xdns"] = { STUB = 1 },
@@ -388,7 +417,7 @@ function show_file(mode, ftype, k, value, indent, dump)
 
 	rc = rc .. op(mode, indent, k, "<" .. ftype .. ">")
 	if(ftype == "binary") then
-		local binary = enc(value)
+		local binary = base64.enc(value)
 		for i=1, #binary, 76 do
 			rc = rc .. op(mode, indent+4, binary:sub(i, i+75))
 			if(not dump and i >= 76*3) then
@@ -632,7 +661,7 @@ function read_config(filename, master, file, aliases)
 						local line = file:read()
 						if(mc._type == "file/binary") then
 							if(string.match(line, "^%s+<eof>$")) then
-								rc[key] = dec(data)
+								rc[key] = base64.dec(data)
 								break
 							end
 							line = string.gsub(line, "^%s+", "")
@@ -882,13 +911,23 @@ function commit_delta(ac, dc, mc, path)
 				goto continue
 			end
 			print("WOULD EXEC FOR: "..path .. "/" ..k)
+			local rc, err = pcall(mv._function, path .. "/" .. k, k, av, dv, mv)
+			if(not rc) then
+				print("Call failed.")
+				print("ERR: " .. err)
+				-- TODO: errors
+				return nil, err
+			end
+
 			ac[k] = dc[k] and copy_table(dc[k])
 			work_done = true
 			goto continue
 		end
 
 		-- changes are present, but no function, so we need to recurse
-		if(commit_delta(av, dv, mv, path .. "/" .. k)) then work_done = true end
+		local wd, err = commit_delta(av, dv, mv, path .. "/" .. k)
+		if(wd == nil) then return wd, err end
+		if(wd) then work_done = true end
 
 ::continue::
 	end
@@ -904,7 +943,12 @@ end
 function commit()
 	while(1) do
 		print("CD")
-		if(not commit_delta()) then
+		local wd, err = commit_delta()
+		if(wd == nil) then
+			print("ERROR, exiting")
+			break;
+		end
+		if(not wd) then
 			print("NO WORK DONE, exiting")
 			break;
 		end
@@ -914,6 +958,8 @@ end
 
 
 prepare_master()
+dump(CONFIG.master)
+
 
 --a, b = get_real_path("/dns/abc")
 --print("path="..a.."   stub="..b)
@@ -928,6 +974,7 @@ set_config("/dhcp", { blah = 1 })
 set_config("/dhcp/one", { fred = 45 })
 set_config("/dns", { billy = "/etc/passwd" })
 set_config("/lee", { X = 4567 })
+set_config("/interface/ethernet/0", { address = "1.2.3.4" })
 
 --set_config("X", { fred="" })
 --
