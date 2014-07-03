@@ -22,6 +22,7 @@ package.cpath = "./lib/?.so"
 
 require("lfs")
 require("base64")
+require("table_utils")
 
 
 --
@@ -100,96 +101,6 @@ CONFIG.active = {
 		["X"]= 1
 	}
 }
-
---
--- see if a list contains a particular item
---
-function is_in_list(list, item)
-	for _,k in ipairs(list) do
-		if(k == item) then return true end
-	end
-	return false
-end
-
---
--- return the index of a match from a list
---
-function find_in_list(list, item)
-	for i = 1, #list do
-		if(list[i] == item) then return i end
-	end
-	return nil
-end
-
---
--- remove a particulare item from a list
---
-function remove_from_list(list, item)
-	local p = find_in_list(list, item)
-	if(p) then table.remove(list, p) end
-	return p
-end
-
---
--- append a list onto a list
---
-function append_list(a, b)
-	for _,k in ipairs(b) do
-		table.insert(a, k)
-	end
-end
-
---
--- recursively copy a table
---
-function copy_table(t)
-	local rc = {}
-	for k, v in pairs(t) do
-		if(type(v) == "table") then rc[k] = copy_table(v)
-		else rc[k] = v end
-	end
-	return rc
-end
-
---
--- return a hash of all the keys in the given tables
---
-function keys(a, b, c)
-	local rc = {}
-	if(a) then for k,_ in pairs(a) do rc[k] = 1 end end
-	if(b) then for k,_ in pairs(b) do rc[k] = 1 end end
-	if(c) then for k,_ in pairs(c) do rc[k] = 1 end end
-	return rc
-end
-
---
--- compare things ... they should have the same elements and values
--- (recusively)
---
-function are_the_same(a, b)
-	if(type(a) ~= type(b)) then return false end
-
-	if(type(a) == "table") then
-		for k,_ in pairs(keys(a, b)) do
-			if(not are_the_same(a[k], b[k])) then return false end
-		end
-	else
-		if(a ~= b) then return false end
-	end
-	return true
-end
-
---
--- remove any empty tables recursively (on the way back)
---
-function clean_table(t)
-	for k,v in pairs(t) do
-		if(type(v) == "table") then 
-			clean_table(v)
-			if(not next(v)) then t[k] = nil end
-		end
-	end
-end
 
 --
 -- standard formatting for show and dump is "[mode] [indent][label] [value]"
