@@ -36,6 +36,11 @@ CONFIG.delta = {}
 CONFIG.active = {}
 
 --
+-- And the validators
+--
+VALIDATOR = {}
+
+--
 -- We look at all of the module files and load each one which should
 -- populate the master table and provide the required types, syntax
 -- checkers and validators
@@ -774,13 +779,15 @@ function set_config(path, items)
 
 	-- now check each of the fields are valid
 	for k,v in pairs(items) do
-		if(not mc[k] or not mc[k]._type) then
+		local ftype = mc[k] and mc[k]._type
+
+		if(not ftype) then
 			print("FIELD INVALID: " .. k)
 			return false
 		end
 
 		-- if we are a file then check we can open it
-		if(mc[k]._type:sub(1,5) == "file/" and v) then
+		if(ftype:sub(1,5) == "file/" and v) then
 			local file = io.open(v)
 			if(not file) then
 				print("invalid file: " .. v)
@@ -790,6 +797,12 @@ function set_config(path, items)
 		end
 
 		-- TODO: field validation
+		if(not VALIDATOR[ftype]) then
+			print("WARNING: no validator for type: " .. ftype)
+		else
+			local rc, rv, err = pcall(VALIDATOR[ftype], v)
+			print("VALIDATOR "..ftype.." returned: rc="..tostring(rc) .. " rv=" .. tostring(rv) .. " err="..tostring(err))
+		end
 	end
 
 	path, stub = get_real_path(path)		-- cope with aliases
@@ -985,7 +998,7 @@ set_config("/dhcp", { blah = 1 })
 set_config("/dhcp/one", { fred = 45 })
 set_config("/dns", { billy = "/etc/passwd" })
 set_config("/lee", { X = 4567 })
-set_config("/interface/ethernet/0", { address = "1.2.3.4" })
+set_config("/interface/ethernet/0", { address = "1.2.3.4/24" })
 
 --set_config("X", { fred="" })
 --

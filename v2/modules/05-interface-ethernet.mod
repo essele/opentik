@@ -3,12 +3,43 @@
 --
 
 --
--- support for ip addresses with a /net number on the end, for
--- example: 10.2.3.4/24
+-- Standard ipv4 addresses (eg. 1.2.3.4)
 --
-local function validator_ip4v_net(v)
+VALIDATOR["ipv4"] = function(v)
+	local a,b,c,d = string.match(v, "^(%d+)%.(%d+)%.(%d+).(%d+)$")
+
+	if(not a) then return false, "invalid ipv4 address" end
+	a, b, c, d = tonumber(a), tonumber(b), tonumber(c), tonumber(d)
+
+	if(a>255 or b>255 or c>255 or d>255 ) then return false, "invalid ipv4 address" end
+	return true
 end
 
+--
+-- ipv4 addresses with a /net number on the end, (eg. 10.2.3.4/24)
+--
+VALIDATOR["ipv4_net"] = function(v)
+	local a,b,c,d,e = string.match(v, "^(%d+)%.(%d+)%.(%d+).(%d+)/(%d+)$")
+
+	if(not a) then return false, "invalid ipv4/net address" end
+	a, b, c, d, e = tonumber(a), tonumber(b), tonumber(c), tonumber(d), tonumber(e)
+
+	if(a>255 or b>255 or c>255 or d>255 or e>32 ) then return false, "invalid ipv4/net address" end
+	return true
+end
+
+--
+-- ipv4 addresses with an optional /net number on the end (either of the above)
+--
+VALIDATOR["ipv4_opt_net"] = function(v)
+	local rc, rv, err
+
+	rc, rv, err = pcall(VALIDATOR["ipv4"], v)
+	if(rv) then return true end
+	rc, rv, err = pcall(VALIDATOR["ipv4_net"], v)
+	if(rv) then return true end
+	return false, "invalid ipv4[/net] address"
+end
 
 
 --
