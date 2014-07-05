@@ -33,30 +33,28 @@ int outfun(int c) {
 struct key {
 	char	*ti_name;
 	char	*ti_data;
+	int		len;
 	int		rc;
 };
 
-#define XKEY_UP				1024
-#define XKEY_DOWN			1025
-#define XKEY_LEFT			1026
-#define XKEY_RIGHT			1027
-
 struct key	keys[] = {
 		// The terminfo database is wrong for cursors??
-		{ .ti_name = "--", .ti_data = "\033[A", .rc = XKEY_UP },
-		{ .ti_name = "--", .ti_data = "\033[B", .rc = XKEY_DOWN },
-		{ .ti_name = "--", .ti_data = "\033[D", .rc = XKEY_LEFT },
-		{ .ti_name = "--", .ti_data = "\033[C", .rc = XKEY_RIGHT },
+		{ .ti_name = "--", .ti_data = "\033[A", .rc = KEY_UP },
+		{ .ti_name = "--", .ti_data = "\033[B", .rc = KEY_DOWN },
+		{ .ti_name = "--", .ti_data = "\033[D", .rc = KEY_LEFT },
+		{ .ti_name = "--", .ti_data = "\033[C", .rc = KEY_RIGHT },
 
 		// Get them anyway...
-		{ .ti_name = "ku", .rc = XKEY_UP },
-		{ .ti_name = "kd", .rc = XKEY_DOWN },
-		{ .ti_name = "kl", .rc = XKEY_LEFT },
-		{ .ti_name = "kr", .rc = XKEY_RIGHT },
+		{ .ti_name = "ku", .rc = KEY_UP },
+		{ .ti_name = "kd", .rc = KEY_DOWN },
+		{ .ti_name = "kl", .rc = KEY_LEFT },
+		{ .ti_name = "kr", .rc = KEY_RIGHT },
 
 		// End the list...
 		{ .ti_name = NULL }
 };
+
+static int shortest_key_data = 999;
 
 /*
  * Initialise teh keys structures to include the terminfo
@@ -64,10 +62,15 @@ struct key	keys[] = {
  */
 void init_keys() {
 	int i=0;
+	int len;
+
 	while(keys[i].ti_name) {
 		if(keys[i].ti_name[0] != '-') {
 			keys[i].ti_data = tgetstr(keys[i].ti_name, NULL);
 		}
+		len = strlen(keys[i].ti_data);
+		keys[i].len = len;
+		if(len < shortest_key_data) shortest_key_data = len;
 		i++;
 	}
 }
@@ -138,7 +141,7 @@ char	read_key() {
 			// See if we have a full or partial match...
 			int i = 0, partial = 0;
 			while(keys[i].ti_name) {
-				int klen = strlen(keys[i].ti_data);
+				int klen = keys[i].len;
 				int j;
 				if(strncmp(buffer, keys[i].ti_data, bsize) == 0) {
 					if(klen == bsize) {
@@ -148,6 +151,10 @@ char	read_key() {
 					}
 					partial = 1;
 					if(bsize == 1) ms = 900;
+
+					// if we are shorter than the shortest key data
+					// then no need to keep looking...
+					if(bsize < shortest_key_data) break;
 				}
 				i++;
 			}
