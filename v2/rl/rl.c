@@ -14,12 +14,17 @@
 struct termios	old_termio, new_termio;
 
 // Keep track of our cursor position
-int				width;
-int				height;
-int				col;
-int				row;
+int				width;		// terminal width
+int				height;		// terminal height
+int				col;		// current column
+int				row;		// current row
+int				scol;		// saved column
+int				srow;		// saved row
 
-char	line[] = "abcdefgh ABCDEFGH 0123456789 ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz blah blah 0123456789";
+char	*line;
+
+char	*sample = "abcdefgh ABCDEFGH 0123456789 ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz blah blah 0123456789";
+int		line_len;
 
 
 
@@ -77,13 +82,14 @@ struct {
 /*
  * Table and variables for reading termcap flags
  */
-int		am, xn;
+int		am, xn, LP;
 struct {
 	char	*name;
 	int		*ptr;
 } ti_flags[] = {
 		{ "am", &am },
 		{ "xn", &xn },
+		{ "LP", &LP },
 		{ NULL, NULL }
 };
 
@@ -92,31 +98,33 @@ int outfun(int c) {
 }
 
 void remove_char_at(int i) {
-	int movesize = strlen(line) - i;	// includes 0 term
+	int movesize = line_len - i;	// includes 0 term
 	memmove(line+i, line+i+1, movesize);
+	line_len--;
+}
+void insert_char_at(int i, char c) {
+	int movesize = (line_len - i)+1;
+	memmove(line+i+1, line+i, movesize);
+	line[i] = c;
+	line_len++;
 }
 
 void show_line() {
 	char *p = line;
 
 	while(*p) {
-		printf("%c", *p++);
+		putchar(*p++);
 		col++;
 		if(col == width) {
-			printf("\n");
 			col = 0;
 			row++;
 		}
 	}
-	fflush(0);
-}
-void show_char(char c) {
-	printf("%c", c);
-	col++;
-	if(col == width) {
-		printf("\n");
-		col = 0;
-		row++;
+	// If we ended on the end of a row, and we are (am) and (xn) then
+	// output a space and then go back to get us in the right place
+	if(col == 0 && am && xn) {
+		printf(" ");
+		printf(le);
 	}
 	fflush(0);
 }
@@ -151,6 +159,29 @@ void move_to(int r, int c) {
 }
 
 /*
+ * Save and restore cursor routines, not using the builtins though
+ */
+void save_pos() {
+	srow = row;
+	scol = col;
+}
+void restore_pos() {
+	move_to(srow, scol);
+}
+
+void redraw_line(int blank) {
+	save_pos();
+	goto_origin();
+	show_line();
+	if(blank) {
+		putchar(' ');
+		// we only need to move back if we're not special and last col
+		if(!(am && xn && col == width-1)) printf(le);
+	}
+	restore_pos();
+}
+
+/*
  * Move back a single char, handle wrapping back to previous line
  */
 void move_back() {
@@ -167,6 +198,19 @@ void move_back() {
 		col--;
 	}
 }
+void move_on() {
+	col++;
+	if(col < width) {
+		printf(nd);
+	} else {
+		if(am && xn) {
+			printf(cr);
+			printf(_do);
+		}
+		col = 0;
+		row++;
+	}
+}
 
 void int_handler(int sig) {
 	printf("CLEANUP");
@@ -181,12 +225,24 @@ void winch_handler(int sig) {
 	if(ioctl(0, TIOCGWINSZ, &ws) == -1) {
 		fprintf(stderr, "ioctl() err\n");
 	} else {
+		// Work out our current index into the line...
+		int pos = (row * width) + col;
+
+		// Update the metrics...
 		width = ws.ws_col;
 		height = ws.ws_row;
-	// TODO, maintain cursor position
+
+//		fprintf(stderr, "\n\nw=%d h=%d\n", width, height);
+
 		goto_origin();
-		printf(cd);
-		show_line();
+//		redraw_line(0);
+
+		// Now reposition our cursor back to where it was...
+		int nc, nr;
+		nr = pos/width;
+		nc = pos%width;
+//		move_to(nr, nc);
+		fflush(0);
 	}
 }
 
@@ -353,7 +409,9 @@ int main() {
 
 	signal(SIGQUIT, int_handler);
 	signal(SIGINT, int_handler);
-	signal(SIGWINCH, winch_handler);
+//	signal(SIGWINCH, winch_handler);
+	printf(sample);
+	printf("\n");
 	
 	rc = tgetent(NULL, termtype);
 	fprintf(stderr, "rc=%d\n", rc);
@@ -370,6 +428,11 @@ int main() {
 	char	*obuf = buf;
 
 	init_terminfo_data(&buf);
+	fprintf(stderr, "am=%d xn=%d LP=%d\n", am, xn, LP);
+
+	line = malloc(8192);
+	strcpy(line, sample);
+	line_len = strlen(line);
 
 	int c;
 
@@ -385,22 +448,19 @@ int main() {
 			break;
 
 		case KEY_RIGHT:
-			tputs(tgetstr("nd", NULL), 1, outfun);
-			col++;
+			if(((row * width)+col) < line_len) {
+//				tputs(tgetstr("nd", NULL), 1, outfun);
+//				col++;
+				move_on();
+			}
 			break;
 
 		case KEY_DC:
-			{
+			if(((row * width)+col) < line_len) {
 				// TODO: check for end of string
 				int pos = (row * width) + col;
-				int sr = row, sc = col;
-				
 				remove_char_at(pos);
-
-				goto_origin();
-				printf(cd);
-				show_line();
-				move_to(sr, sc);
+				redraw_line(1);
 			}
 			break;
 
@@ -409,42 +469,25 @@ int main() {
 			break;
 
 		case 127:
+		case 8:
 			// if we are the first char of the screen then we need to backup to the
 			// end of the previous line
 			//
 			if(((row * width)+col) > 0) {
 				move_back();
 				int pos = (row * width) + col;
-				int sr = row, sc = col;
-				
 				remove_char_at(pos);
-
-				goto_origin();
-				printf(cd);
-				show_line();
-				move_to(sr, sc);
-				
-//				move_back();
-//				show_char(' ');
-//				move_back();
+				redraw_line(1);
 			}
 			break;
 
 		default:
-			show_char(c);
-//			printf("[%c]", c);
-/*
-			col++;
-			if(col == width) { 
-				col = 0; 
-				row++;
-//				tputs(tgetstr("cr", NULL), 1, outfun);
-//				tputs(tgetstr("do", NULL), 1, outfun);
-				printf("\n");
+			{
+				int pos = (row * width) + col;
+				insert_char_at(pos, c);
+				redraw_line(0);
+				move_on();
 			}
-*/
-			// if we are the last char of the term, then we need to move to the next
-			// line (if we don't autowrap)
 		}
 		fflush(stdout);
 	}
