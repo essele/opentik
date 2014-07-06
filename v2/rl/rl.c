@@ -9,26 +9,19 @@
 #include <term.h>
 #include <sys/ioctl.h>
 
-char	PC;			// for tputs
-char	*BC;		// for tgoto
-char	*UP;
 
+// For saving and restoring our termios...
 struct termios	old_termio, new_termio;
 
+// Keep track of our cursor position
+int				width;
+int				height;
+int				col;
+int				row;
+
+char	line[] = "abcdefgh ABCDEFGH 0123456789 ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz blah blah 0123456789";
 
 
-void int_handler(int sig) {
-	printf("CLEANUP");
-	ioctl(0, TCSETS, &old_termio);
-	exit(1);
-}
-
-
-
-
-int outfun(int c) {
-	printf("%c", c);
-}
 
 /*
  * Table for reading termcap keys
@@ -58,25 +51,32 @@ struct {
 static int shortest_key_data = 999;
 static int longest_key_data = 0;
 
-char	*nd, *up;
-
 /*
- * Table for reading termcap strings
+ * Table and variables for reading termcap strings
  */
+char	PC;						// for tputs (padding)
+char	*BC, *UP;				// required globals?
+char	*pc, *nd, *up, *le, *cr, *cd, *_do;
 struct {
 	char	*name;
 	char	**ptr;
 } ti_strings[] = {
+		{ "pc", &pc },
 		{ "nd", &nd },
 		{ "up", &up },
+		{ "up", &UP },
+		{ "le", &BC },
+		{ "le", &le },
+		{ "do", &_do },
+		{ "cr", &cr },
+		{ "cd", &cd },
 		{ NULL, NULL }
 };
 
-int		am, xn;
-
 /*
- * Table for reading termcap flags
+ * Table and variables for reading termcap flags
  */
+int		am, xn;
 struct {
 	char	*name;
 	int		*ptr;
@@ -85,6 +85,111 @@ struct {
 		{ "xn", &xn },
 		{ NULL, NULL }
 };
+
+int outfun(int c) {
+	printf("%c", c);
+}
+
+void remove_char_at(int i) {
+	int movesize = strlen(line) - i;	// includes 0 term
+	memmove(line+i, line+i+1, movesize);
+}
+
+void show_line() {
+	char *p = line;
+
+	while(*p) {
+		printf("%c", *p++);
+		col++;
+		if(col == width) {
+			printf("\n");
+			col = 0;
+			row++;
+		}
+	}
+	fflush(0);
+}
+void show_char(char c) {
+	printf("%c", c);
+	col++;
+	if(col == width) {
+		printf("\n");
+		col = 0;
+		row++;
+	}
+	fflush(0);
+}
+
+/*
+ * Get back to the very start of our line so we can redraw...
+ */
+void goto_origin() {
+	printf(cr);
+	col = 0;
+	while(row > 0) {
+		printf(up);
+		row--;
+	}
+	fflush(0);
+}
+
+/*
+ * From where we are, get to our proposed position, for row we just
+ * move up or down as needed. For col we see if we are closer to col.
+ */
+void move_to(int r, int c) {
+	while(r > row) { printf(_do); row++; }
+	while(r < row) { printf(up); row--; }
+	
+	// TODO: the optimisation
+	if(abs(col-c) > c) {
+		printf(cr);
+		col = 0;
+	}
+	while(c > col) { printf(nd); col++; }
+	while(c < col) { printf(le); col--; }
+}
+
+/*
+ * Move back a single char, handle wrapping back to previous line
+ */
+void move_back() {
+	if(col == 0) {
+		tputs(up, 1, outfun);
+		int i;
+		for(i=0; i < width; i++) {
+			tputs(nd, 1, outfun);
+		}
+		col = width-1;
+		row--;
+	} else {
+		tputs(BC, 1, outfun);
+		col--;
+	}
+}
+
+void int_handler(int sig) {
+	printf("CLEANUP");
+	ioctl(0, TCSETS, &old_termio);
+	exit(1);
+}
+
+
+void winch_handler(int sig) {
+	struct winsize	ws;
+
+	if(ioctl(0, TIOCGWINSZ, &ws) == -1) {
+		fprintf(stderr, "ioctl() err\n");
+	} else {
+//		fprintf(stderr, "WINCH %d %d\n", ws.ws_row, ws.ws_col);
+		width = ws.ws_col;
+		height = ws.ws_row;
+		goto_origin();
+		printf(cd);
+		show_line();
+	}
+}
+
 
 
 
@@ -103,6 +208,8 @@ void init_terminfo_data(char **buf) {
 			*ti_strings[i].ptr = s;
 		}
 	}
+	// Fill in the PC global...
+	PC = pc ? *pc : 0;
 
 	// Now the keys...	
 	for(i=0; ti_keys[i].name; i++) {
@@ -145,18 +252,18 @@ char	get_char(int *ms) {
 	clock_gettime(CLOCK_MONOTONIC, &before);
 	rc = ppoll(fds, 1, &timeout, NULL);
 
+	// TODO: ppoll errors?
 	if(rc == 0) {
-		// we have nothing!
 		*ms = 0;
 		return 0;
 	}
 
 	clock_gettime(CLOCK_MONOTONIC, &after);
-	*ms -= ((after.tv_sec - before.tv_sec)*1000) + 
-								((after.tv_nsec - before.tv_nsec)/1000000);
+	*ms -= ((after.tv_sec - before.tv_sec)*1000) + ((after.tv_nsec - before.tv_nsec)/1000000);
 	if(*ms < 0) *ms = 0;
 
 	rc = read(0, &c, 1);
+	// TODO: read errors?
 	return c;
 }
 
@@ -218,7 +325,7 @@ int	read_key() {
 	if(bsize) {
 		char c = buffer[bpos];
 		bsize--; bpos++;
-		if(bsize == 0) { bpos = 0; }
+		if(bsize == 0) bpos = 0;
 		return c;
 	}
 	fprintf(stderr, "aaarrgg\n");
@@ -246,33 +353,18 @@ int main() {
 
 	signal(SIGQUIT, int_handler);
 	signal(SIGINT, int_handler);
+	signal(SIGWINCH, winch_handler);
 	
 	rc = tgetent(NULL, termtype);
 	fprintf(stderr, "rc=%d\n", rc);
 
-	int height = tgetnum("li");
-	int width = tgetnum("co");
+	height = tgetnum("li");
+	width = tgetnum("co");
 	printf("w=%d h=%d\n", width, height);
 
-	temp = tgetstr("pc", NULL);
-	PC = temp ? *temp : 0;
-	BC = tgetstr("le", NULL);
-	UP = tgetstr("up", NULL);
+	col = 0;
+	row = 0;
 
-
-	char *keyu = tgetstr("ku", NULL);
-	int xx = strlen(keyu);
-	int i;
-	for(i=0; i < xx; i++) {
-		printf("%d: [%d]\n", i, keyu[i]);
-	}
-//	tputs(tgetstr("ke", NULL), 1, outfun);
-
-	int am = tgetflag("am");
-	int xn = tgetflag("xn");
-	int LP = tgetflag("LP");
-
-	fprintf(stderr, "am=%d xn=%d LP=%d\n", am, xn, LP);
 
 	char	*buf = malloc(2048);
 	char	*obuf = buf;
@@ -280,7 +372,8 @@ int main() {
 	init_terminfo_data(&buf);
 
 	int c;
-	int xp = 0;
+
+	show_line();
 
 	while(1) {
 		c = read_key();
@@ -288,13 +381,12 @@ int main() {
 		switch(c) {
 
 		case KEY_LEFT:
-			tputs(BC, 1, outfun);
-			xp--;
+			if(((row * width)+col) > 0) move_back();
 			break;
 
 		case KEY_RIGHT:
 			tputs(tgetstr("nd", NULL), 1, outfun);
-			xp++;
+			col++;
 			break;
 
 		case 27:
@@ -305,40 +397,36 @@ int main() {
 			// if we are the first char of the screen then we need to backup to the
 			// end of the previous line
 			//
-			if(xp == 0) {
-				//printf("-");
-				tputs(tgetstr("up", NULL), 1, outfun);
-				int i;
-				for(i=0; i < width; i++) {
-					tputs(tgetstr("nd", NULL), 1, outfun);
-				}
-				outfun(' ');
-				outfun('\n');
-				tputs(tgetstr("up", NULL), 1, outfun);
-				for(i=0; i < width; i++) {
-					tputs(tgetstr("nd", NULL), 1, outfun);
-				}
+			if(((row * width)+col) > 0) {
+				move_back();
+				int pos = (row * width) + col;
+				int sr = row, sc = col;
+				
+				remove_char_at(pos);
 
-
-				xp = width-1;
-			} else {
-				tputs(BC, 1, outfun);
-				outfun(' ');
-				tputs(BC, 1, outfun);
-				xp--;
+				goto_origin();
+				printf(cd);
+				show_line();
+				move_to(sr, sc);
+				
+//				move_back();
+//				show_char(' ');
+//				move_back();
 			}
 			break;
 
 		default:
-			printf("%c", c);
-			xp++;
-			if(xp == width) { 
-				xp = 0; 
+			show_char(c);
+/*			printf("%c", c);
+			col++;
+			if(col == width) { 
+				col = 0; 
+				row++;
 //				tputs(tgetstr("cr", NULL), 1, outfun);
 //				tputs(tgetstr("do", NULL), 1, outfun);
 				printf("\n");
 			}
-
+*/
 			// if we are the last char of the term, then we need to move to the next
 			// line (if we don't autowrap)
 		}
