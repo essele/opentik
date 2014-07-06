@@ -43,6 +43,7 @@ struct {
 		{ "kd", NULL, 0, KEY_DOWN },
 		{ "kl", NULL, 0, KEY_LEFT },
 		{ "kr", NULL, 0, KEY_RIGHT },
+		{ "kD", NULL, 0, KEY_DC },
 
 		// End the list...
 		{ NULL, NULL, 0 }
@@ -141,7 +142,6 @@ void move_to(int r, int c) {
 	while(r > row) { printf(_do); row++; }
 	while(r < row) { printf(up); row--; }
 	
-	// TODO: the optimisation
 	if(abs(col-c) > c) {
 		printf(cr);
 		col = 0;
@@ -163,7 +163,7 @@ void move_back() {
 		col = width-1;
 		row--;
 	} else {
-		tputs(BC, 1, outfun);
+		tputs(le, 1, outfun);
 		col--;
 	}
 }
@@ -181,9 +181,9 @@ void winch_handler(int sig) {
 	if(ioctl(0, TIOCGWINSZ, &ws) == -1) {
 		fprintf(stderr, "ioctl() err\n");
 	} else {
-//		fprintf(stderr, "WINCH %d %d\n", ws.ws_row, ws.ws_col);
 		width = ws.ws_col;
 		height = ws.ws_row;
+	// TODO, maintain cursor position
 		goto_origin();
 		printf(cd);
 		show_line();
@@ -389,6 +389,21 @@ int main() {
 			col++;
 			break;
 
+		case KEY_DC:
+			{
+				// TODO: check for end of string
+				int pos = (row * width) + col;
+				int sr = row, sc = col;
+				
+				remove_char_at(pos);
+
+				goto_origin();
+				printf(cd);
+				show_line();
+				move_to(sr, sc);
+			}
+			break;
+
 		case 27:
 			printf("X");
 			break;
@@ -417,7 +432,8 @@ int main() {
 
 		default:
 			show_char(c);
-/*			printf("%c", c);
+//			printf("[%c]", c);
+/*
 			col++;
 			if(col == width) { 
 				col = 0; 
