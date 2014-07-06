@@ -30,48 +30,97 @@ int outfun(int c) {
 	printf("%c", c);
 }
 
-struct key {
-	char	*ti_name;
-	char	*ti_data;
+/*
+ * Table for reading termcap keys
+ */
+struct {
+	char	*name;
+	char	*data;
 	int		len;
 	int		rc;
-};
-
-struct key	keys[] = {
+} ti_keys[] = {
 		// The terminfo database is wrong for cursors??
-		{ .ti_name = "--", .ti_data = "\033[A", .rc = KEY_UP },
-		{ .ti_name = "--", .ti_data = "\033[B", .rc = KEY_DOWN },
-		{ .ti_name = "--", .ti_data = "\033[D", .rc = KEY_LEFT },
-		{ .ti_name = "--", .ti_data = "\033[C", .rc = KEY_RIGHT },
+		{ "ku", "\033[A", 3, KEY_UP },
+		{ "kd", "\033[B", 3, KEY_DOWN },
+		{ "kl", "\033[D", 3, KEY_LEFT },
+		{ "kr", "\033[C", 3, KEY_RIGHT },
 
-		// Get them anyway...
-		{ .ti_name = "ku", .rc = KEY_UP },
-		{ .ti_name = "kd", .rc = KEY_DOWN },
-		{ .ti_name = "kl", .rc = KEY_LEFT },
-		{ .ti_name = "kr", .rc = KEY_RIGHT },
+		// Get them defined ones anyway...
+		{ "ku", NULL, 0, KEY_UP },
+		{ "kd", NULL, 0, KEY_DOWN },
+		{ "kl", NULL, 0, KEY_LEFT },
+		{ "kr", NULL, 0, KEY_RIGHT },
 
 		// End the list...
-		{ .ti_name = NULL }
+		{ NULL, NULL, 0 }
 };
 
 static int shortest_key_data = 999;
+static int longest_key_data = 0;
+
+char	*nd, *up;
 
 /*
- * Initialise teh keys structures to include the terminfo
- * strings
+ * Table for reading termcap strings
  */
-void init_keys() {
-	int i=0;
-	int len;
+struct {
+	char	*name;
+	char	**ptr;
+} ti_strings[] = {
+		{ "nd", &nd },
+		{ "up", &up },
+		{ NULL, NULL }
+};
 
-	while(keys[i].ti_name) {
-		if(keys[i].ti_name[0] != '-') {
-			keys[i].ti_data = tgetstr(keys[i].ti_name, NULL);
+int		am, xn;
+
+/*
+ * Table for reading termcap flags
+ */
+struct {
+	char	*name;
+	int		*ptr;
+} ti_flags[] = {
+		{ "am", &am },
+		{ "xn", &xn },
+		{ NULL, NULL }
+};
+
+
+
+/*
+ * Initialise the termcap/terminfo strings
+ */
+void init_terminfo_data(char **buf) {
+	int i, len;
+
+	// First the strings...
+	for(i=0; ti_strings[i].name; i++) {
+		char	*s = tgetstr(ti_strings[i].name, buf);
+		if(!s) {
+			fprintf(stderr, "missing termcap capability [%s]\n", ti_strings[i].name);
+		} else {
+			*ti_strings[i].ptr = s;
 		}
-		len = strlen(keys[i].ti_data);
-		keys[i].len = len;
-		if(len < shortest_key_data) shortest_key_data = len;
-		i++;
+	}
+
+	// Now the keys...	
+	for(i=0; ti_keys[i].name; i++) {
+		if(!ti_keys[i].data) {
+			char *p = tgetstr(ti_keys[i].name, buf);
+			if(p) {
+				len = strlen(p);
+				ti_keys[i].len = len;
+				ti_keys[i].data = p;
+				if(len < shortest_key_data) shortest_key_data = len;
+				if(len > longest_key_data) longest_key_data = len;
+			}
+		}
+	}
+
+	// Now the flags...
+	for(i=0; ti_flags[i].name; i++) {
+		*ti_flags[i].ptr = tgetflag(ti_flags[i].name);
 	}
 }
 
@@ -117,9 +166,12 @@ char	get_char(int *ms) {
  * If the string so far is a partial match for one of our special
  * strings then wait to see if we get more characters.
  */
-char	read_key() {
-	static char	buffer[5];
+int	read_key() {
+	static char *buffer = NULL;
 	static int	bsize = 0, bpos = 0;
+	int			i;
+
+	if(!buffer) buffer = malloc(longest_key_data + 1);
 
 	// If we have nothing buffered, then we need to read...
 	if(!bsize) {
@@ -139,15 +191,15 @@ char	read_key() {
 			if(buffer[0] != 27) break;
 
 			// See if we have a full or partial match...
-			int i = 0, partial = 0;
-			while(keys[i].ti_name) {
-				int klen = keys[i].len;
-				int j;
-				if(strncmp(buffer, keys[i].ti_data, bsize) == 0) {
+			int partial = 0;
+			for(i=0; ti_keys[i].name; i++) {
+				if(!ti_keys[i].data) continue;
+
+				int klen = ti_keys[i].len;
+				if(strncmp(buffer, ti_keys[i].data, bsize) == 0) {
 					if(klen == bsize) {
-						fprintf(stderr, "got match on i=%d v=%d\n", i, keys[i].rc);
 						bsize = bpos = 0;
-						return 0;
+						return ti_keys[i].rc;
 					}
 					partial = 1;
 					if(bsize == 1) ms = 900;
@@ -156,7 +208,6 @@ char	read_key() {
 					// then no need to keep looking...
 					if(bsize < shortest_key_data) break;
 				}
-				i++;
 			}
 			if(partial) continue;
 			break;
@@ -201,7 +252,7 @@ int main() {
 
 	int height = tgetnum("li");
 	int width = tgetnum("co");
-	printf("w=%d h=%d\n", height, width);
+	printf("w=%d h=%d\n", width, height);
 
 	temp = tgetstr("pc", NULL);
 	PC = temp ? *temp : 0;
@@ -215,20 +266,42 @@ int main() {
 	for(i=0; i < xx; i++) {
 		printf("%d: [%d]\n", i, keyu[i]);
 	}
-	tputs(tgetstr("ke", NULL), 1, outfun);
+//	tputs(tgetstr("ke", NULL), 1, outfun);
 
-	init_keys();
+	int am = tgetflag("am");
+	int xn = tgetflag("xn");
+	int LP = tgetflag("LP");
 
-	char c;
+	fprintf(stderr, "am=%d xn=%d LP=%d\n", am, xn, LP);
+
+	char	*buf = malloc(2048);
+	char	*obuf = buf;
+
+	init_terminfo_data(&buf);
+
+	int c;
 	int xp = 0;
 
 	while(1) {
-//		read(0, &c, 1);
 		c = read_key();
 
-		if(c == 27) {
+		switch(c) {
+
+		case KEY_LEFT:
+			tputs(BC, 1, outfun);
+			xp--;
+			break;
+
+		case KEY_RIGHT:
+			tputs(tgetstr("nd", NULL), 1, outfun);
+			xp++;
+			break;
+
+		case 27:
 			printf("X");
-		} else if(c == 127) {
+			break;
+
+		case 127:
 			// if we are the first char of the screen then we need to backup to the
 			// end of the previous line
 			//
@@ -240,6 +313,13 @@ int main() {
 					tputs(tgetstr("nd", NULL), 1, outfun);
 				}
 				outfun(' ');
+				outfun('\n');
+				tputs(tgetstr("up", NULL), 1, outfun);
+				for(i=0; i < width; i++) {
+					tputs(tgetstr("nd", NULL), 1, outfun);
+				}
+
+
 				xp = width-1;
 			} else {
 				tputs(BC, 1, outfun);
@@ -247,15 +327,16 @@ int main() {
 				tputs(BC, 1, outfun);
 				xp--;
 			}
-		} else if(c == '\000') {
-			tputs(tgetstr("up", NULL), 1, outfun);
-		} else {
+			break;
+
+		default:
 			printf("%c", c);
 			xp++;
 			if(xp == width) { 
 				xp = 0; 
-				tputs(tgetstr("cr", NULL), 1, outfun);
-				tputs(tgetstr("do", NULL), 1, outfun);
+//				tputs(tgetstr("cr", NULL), 1, outfun);
+//				tputs(tgetstr("do", NULL), 1, outfun);
+				printf("\n");
 			}
 
 			// if we are the last char of the term, then we need to move to the next
