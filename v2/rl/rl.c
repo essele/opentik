@@ -27,6 +27,8 @@ char	*sample = "abcdefgh ABCDEFGH 0123456789 ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefgh
 int		line_len;
 
 
+int		have_multi_move = 0;
+
 
 /*
  * Table for reading termcap keys
@@ -38,17 +40,17 @@ struct {
 	int		rc;
 } ti_keys[] = {
 		// The terminfo database is wrong for cursors??
-		{ "ku", "\033[A", 3, KEY_UP },
-		{ "kd", "\033[B", 3, KEY_DOWN },
-		{ "kl", "\033[D", 3, KEY_LEFT },
-		{ "kr", "\033[C", 3, KEY_RIGHT },
+		{ "kcuu1", "\033[A", 3, KEY_UP },
+		{ "kcud1", "\033[B", 3, KEY_DOWN },
+		{ "kcub1", "\033[D", 3, KEY_LEFT },
+		{ "kcuf1", "\033[C", 3, KEY_RIGHT },
 
 		// Get them defined ones anyway...
-		{ "ku", NULL, 0, KEY_UP },
-		{ "kd", NULL, 0, KEY_DOWN },
-		{ "kl", NULL, 0, KEY_LEFT },
-		{ "kr", NULL, 0, KEY_RIGHT },
-		{ "kD", NULL, 0, KEY_DC },
+		{ "kcuu1", NULL, 0, KEY_UP },
+		{ "kcud1", NULL, 0, KEY_DOWN },
+		{ "kcub1", NULL, 0, KEY_LEFT },
+		{ "kcuf1", NULL, 0, KEY_RIGHT },
+		{ "kdch1", NULL, 0, KEY_DC },
 
 		// End the list...
 		{ NULL, NULL, 0 }
@@ -57,45 +59,6 @@ struct {
 static int shortest_key_data = 999;
 static int longest_key_data = 0;
 
-/*
- * Table and variables for reading termcap strings
- */
-char	PC;						// for tputs (padding)
-char	*BC, *UP;				// required globals?
-char	*pc, *nd, *up, *le, *cr, *cd, *_do;
-struct {
-	char	*name;
-	char	**ptr;
-} ti_strings[] = {
-		{ "pc", &pc },
-		{ "nd", &nd },
-		{ "up", &up },
-		{ "up", &UP },
-		{ "le", &BC },
-		{ "le", &le },
-		{ "do", &_do },
-		{ "cr", &cr },
-		{ "cd", &cd },
-		{ NULL, NULL }
-};
-
-/*
- * Table and variables for reading termcap flags
- */
-int		am, xn, LP;
-struct {
-	char	*name;
-	int		*ptr;
-} ti_flags[] = {
-		{ "am", &am },
-		{ "xn", &xn },
-		{ "LP", &LP },
-		{ NULL, NULL }
-};
-
-int outfun(int c) {
-	printf("%c", c);
-}
 
 void remove_char_at(int i) {
 	int movesize = line_len - i;	// includes 0 term
@@ -120,26 +83,25 @@ void show_line() {
 			row++;
 		}
 	}
-	// If we ended on the end of a row, and we are (am) and (xn) then
+	// If we ended on the end of a row, then if we eat newlines then
+	// we need to move to the right place
 	// output a space and then go back to get us in the right place
-	if(col == 0 && am && xn) {
-		printf(" ");
-		printf(le);
+	if(col == 0 && auto_right_margin && eat_newline_glitch) {
+		putp(carriage_return);
+		putp(cursor_down);
 	}
-	fflush(0);
 }
 
 /*
  * Get back to the very start of our line so we can redraw...
  */
 void goto_origin() {
-	printf(cr);
+	putp(carriage_return);
 	col = 0;
 	while(row > 0) {
-		printf(up);
+		putp(cursor_up);
 		row--;
 	}
-	fflush(0);
 }
 
 /*
@@ -147,15 +109,24 @@ void goto_origin() {
  * move up or down as needed. For col we see if we are closer to col.
  */
 void move_to(int r, int c) {
-	while(r > row) { printf(_do); row++; }
-	while(r < row) { printf(up); row--; }
+	if(have_multi_move) {
+		if(r > row) { putp(tparm(parm_down_cursor, r-row)); }
+		if(r < row) { putp(tparm(parm_up_cursor, row-r)); }
+		if(c > col) { putp(tparm(parm_right_cursor, c-col)); }
+		if(c < col) { putp(tparm(parm_left_cursor, col-c)); }
+		row = r;
+		col = c;
+	} else {
+		while(r > row) { putp(cursor_down); row++; }
+		while(r < row) { putp(cursor_up); row--; }
 	
-	if(abs(col-c) > c) {
-		printf(cr);
-		col = 0;
+		if(abs(col-c) > c) {
+			putp(carriage_return);
+			col = 0;
+		}
+		while(c > col) { putp(cursor_right); col++; }
+		while(c < col) { putp(cursor_left); col--; }
 	}
-	while(c > col) { printf(nd); col++; }
-	while(c < col) { printf(le); col--; }
 }
 
 /*
@@ -173,11 +144,7 @@ void redraw_line(int blank) {
 	save_pos();
 	goto_origin();
 	show_line();
-	if(blank) {
-		putchar(' ');
-		// we only need to move back if we're not special and last col
-		if(!(am && xn && col == width-1)) printf(le);
-	}
+	if(blank) putp(clr_eol);
 	restore_pos();
 }
 
@@ -186,26 +153,30 @@ void redraw_line(int blank) {
  */
 void move_back() {
 	if(col == 0) {
-		tputs(up, 1, outfun);
+		putp(cursor_up);
 		int i;
-		for(i=0; i < width; i++) {
-			tputs(nd, 1, outfun);
+		if(have_multi_move) {
+			putp(tparm(parm_right_cursor, width));
+		} else {
+			for(i=0; i < width; i++) {
+				putp(cursor_right);
+			}
 		}
 		col = width-1;
 		row--;
 	} else {
-		tputs(le, 1, outfun);
+		putp(cursor_left);
 		col--;
 	}
 }
 void move_on() {
 	col++;
 	if(col < width) {
-		printf(nd);
+		putp(cursor_right);
 	} else {
-		if(am && xn) {
-			printf(cr);
-			printf(_do);
+		if(auto_right_margin && eat_newline_glitch) {
+			putp(carriage_return);
+			putp(cursor_down);
 		}
 		col = 0;
 		row++;
@@ -232,17 +203,19 @@ void winch_handler(int sig) {
 		width = ws.ws_col;
 		height = ws.ws_row;
 
-//		fprintf(stderr, "\n\nw=%d h=%d\n", width, height);
-
-		goto_origin();
-//		redraw_line(0);
+		// Different terms do things differently, so our safest option
+		// is to clear the screen!
+		// TODO: is there a better way?
+		putp(clear_screen);
+		row = 0;
+		col = 0;
+		redraw_line(0);
 
 		// Now reposition our cursor back to where it was...
-		int nc, nr;
-		nr = pos/width;
-		nc = pos%width;
-//		move_to(nr, nc);
-		fflush(0);
+		move_to(pos/width, pos%width);
+
+		// Make sure we update the screen...
+		fflush(stdout);
 	}
 }
 
@@ -252,39 +225,30 @@ void winch_handler(int sig) {
 /*
  * Initialise the termcap/terminfo strings
  */
-void init_terminfo_data(char **buf) {
+void init_terminfo_data() {
 	int i, len;
 
-	// First the strings...
-	for(i=0; ti_strings[i].name; i++) {
-		char	*s = tgetstr(ti_strings[i].name, buf);
-		if(!s) {
-			fprintf(stderr, "missing termcap capability [%s]\n", ti_strings[i].name);
-		} else {
-			*ti_strings[i].ptr = s;
-		}
-	}
-	// Fill in the PC global...
-	PC = pc ? *pc : 0;
+	// Can we support moving the cursor multiple spaces?
+	if(parm_up_cursor && parm_down_cursor && parm_left_cursor && parm_right_cursor)
+		have_multi_move = 1;
 
-	// Now the keys...	
+	// Make sure we have the key values
 	for(i=0; ti_keys[i].name; i++) {
+		fprintf(stderr, "looking at %s\n", ti_keys[i].name);
 		if(!ti_keys[i].data) {
-			char *p = tgetstr(ti_keys[i].name, buf);
-			if(p) {
+			char *p = tigetstr(ti_keys[i].name);
+			if((int)p > 0) {
 				len = strlen(p);
 				ti_keys[i].len = len;
 				ti_keys[i].data = p;
 				if(len < shortest_key_data) shortest_key_data = len;
 				if(len > longest_key_data) longest_key_data = len;
+			} else {
+				fprintf(stderr, "missing terminfo key [%s] (%d)\n", ti_keys[i].name, (int)p);
 			}
 		}
 	}
 
-	// Now the flags...
-	for(i=0; ti_flags[i].name; i++) {
-		*ti_flags[i].ptr = tgetflag(ti_flags[i].name);
-	}
 }
 
 
@@ -409,26 +373,43 @@ int main() {
 
 	signal(SIGQUIT, int_handler);
 	signal(SIGINT, int_handler);
-//	signal(SIGWINCH, winch_handler);
+	signal(SIGWINCH, winch_handler);
 	printf(sample);
 	printf("\n");
-	
-	rc = tgetent(NULL, termtype);
-	fprintf(stderr, "rc=%d\n", rc);
 
-	height = tgetnum("li");
-	width = tgetnum("co");
+	// Setup terminfo stuff...
+	rc = setupterm((char *)0, 1, (int *)0);
+	fprintf(stderr, "rc=%d\n", rc);
+	
+//	rc = tgetent(NULL, termtype);
+//	fprintf(stderr, "rc=%d\n", rc);
+//
+/*	int y;
+	for(y=0; strnames[y]; y++) {
+		fprintf(stderr, "%d: %s\n", y, strnames[y]);
+	}
+	fprintf(stderr, "lines=%s\n", cursor_down);
+*/
+	height = lines;
+	width = columns;
 	printf("w=%d h=%d\n", width, height);
 
 	col = 0;
 	row = 0;
 
+	init_terminfo_data();
 
-	char	*buf = malloc(2048);
-	char	*obuf = buf;
+	int t;
+	char *x = parm_down_cursor;
+	for(t=0; t < strlen(x); t++) {
+		printf("> %d  [%c] %d\n", t, x[t], x[t]);
+	}
 
-	init_terminfo_data(&buf);
-	fprintf(stderr, "am=%d xn=%d LP=%d\n", am, xn, LP);
+	printf("arm=%d, eng=%d\n",  auto_right_margin, eat_newline_glitch);
+
+//	printf(tparm(setb, 4));
+	printf("HELLO\n");
+//	printf(tparm(setb, 0));
 
 	line = malloc(8192);
 	strcpy(line, sample);
@@ -437,6 +418,7 @@ int main() {
 	int c;
 
 	show_line();
+	fflush(stdout);
 
 	while(1) {
 		c = read_key();
@@ -492,7 +474,5 @@ int main() {
 		fflush(stdout);
 	}
 
-	tputs(tgoto(tgetstr("cm", NULL), 5, 5), 1, outfun);
-	printf("X");
 	return 0;
 }
