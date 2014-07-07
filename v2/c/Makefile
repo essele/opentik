@@ -17,7 +17,7 @@ ALL_D				:= $(wildcard *.d)
 #
 # All of the LIBS we wan to build
 #
-LIBS				= curses.so
+LIBS				= readline.so
 
 all:				$(LIBS)
 
@@ -33,12 +33,12 @@ clean:
 #CFLAGS_netlink.c		= -I/usr/include/libnl3
 #LDFLAGS_netlink.so		= -lnl-3 -lnl-route-3
 
-CFLAGS_curses.so		= -lncurses
+CFLAGS_readline.so		= -ltermcap -lrt
 
 #
 # Which objects to each of the libs need...
 #
-curses.so:			curses.o
+readline.so:			readline.o
 
 
 include $(ALL_D)
