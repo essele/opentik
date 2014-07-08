@@ -29,11 +29,13 @@ int				srow;		// saved row
 char	*line;
 char	*syntax;
 
-char	*sample = "abcdefgh ABCDEFGH 0123456789 ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz blah blah 0123456789";
+char	*sample = "blah blah";
 int		line_len;
 
 
 int		have_multi_move = 0;
+
+int		function_index;
 
 
 /*
@@ -83,8 +85,9 @@ void show_line() {
 	char 	*s = syntax;
 	int		cur_col = 0;
 
-	
-//	putp(tparm(set_a_foreground, 0));
+	if(!*p) return;
+
+	putp(tparm(set_a_foreground, 0));
 
 	while(*p) {
 		if(*s != 127 && *s != cur_col) {
@@ -146,10 +149,29 @@ void restore_pos() {
 	move_to(srow, scol);
 }
 
+int set_syntax(lua_State *L) {
+	luaL_checktype(L, 1, LUA_TLIGHTUSERDATA);		// syntax object
+	luaL_checktype(L, 2, LUA_TNUMBER);				// start pos
+	luaL_checktype(L, 3, LUA_TNUMBER);				// end pos
+	luaL_checktype(L, 4, LUA_TNUMBER);				// value
+
+	char	*s = (char *)lua_topointer(L, 1);
+	int		start = lua_tonumber(L, 2);
+	int		end = lua_tonumber(L, 3);
+	int		v = lua_tonumber(L, 4);
+
+	int 	i;
+
+	// We map from lua index to c...
+	for(i=start-1; i <= end-1; i++) {
+		s[i] = v;
+	}	
+	return 0;
+}
 
 
 
-void redraw_line() {
+void redraw_line(lua_State *L) {
 	static int alloc_size = 0;
 
 	// Make sure we have enough memory for the syntax
@@ -160,15 +182,13 @@ void redraw_line() {
 		memset(syntax, 127, line_len);
 	}
 
-	// TODO: flag to say no syntax check
-	int i;
+	// Get the function onto the stack...
+	lua_rawgeti(L, LUA_REGISTRYINDEX, function_index);
+	lua_pushstring(L, line);
+	lua_pushlightuserdata(L, (void *)syntax);
+	lua_call(L, 2, 1);
 
-	for(i=0; i < line_len; i++) {
-		if(i%6 == 1) {
-			syntax[i] = i%7;
-		}
-	}
-
+	// Show the line...
 	save_pos();
 	move_to(0, 0);
 	show_line();
@@ -381,6 +401,13 @@ int readline(lua_State *L) {
 	int		rc;
 	char	*termtype = getenv("TERM");
 
+	luaL_checktype(L, 1, LUA_TFUNCTION);
+	
+	// push onto the stack and then get a reference
+	lua_pushvalue(L, 1);
+	function_index = luaL_ref(L, LUA_REGISTRYINDEX);
+	
+
 	if(!termtype) {
 		fprintf(stderr, "no TERM defined!\n");
 		exit(1);
@@ -449,7 +476,7 @@ int readline(lua_State *L) {
 
 	while(1) {
 		if(redraw) {
-			redraw_line();
+			redraw_line(L);
 			redraw = 0;
 		}
 		fflush(stdout);
@@ -506,6 +533,7 @@ int readline(lua_State *L) {
  */
 static const struct luaL_reg lib[] = {
 	{"readline", readline},
+	{"set_syntax", set_syntax},
 	//  {"serialize", do_serialize},
 	//  {"unserialize", do_unserialize},
 	{NULL, NULL}
