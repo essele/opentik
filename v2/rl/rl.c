@@ -9,6 +9,10 @@
 #include <term.h>
 #include <sys/ioctl.h>
 
+#include <lua.h>
+#include <lauxlib.h>
+#include <lualib.h>
+
 
 // For saving and restoring our termios...
 struct termios	old_termio, new_termio;
@@ -22,6 +26,7 @@ int				scol;		// saved column
 int				srow;		// saved row
 
 char	*line;
+char	*syntax;
 
 char	*sample = "abcdefgh ABCDEFGH 0123456789 ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz blah blah 0123456789";
 int		line_len;
@@ -73,9 +78,19 @@ void insert_char_at(int i, char c) {
 }
 
 void show_line() {
-	char *p = line;
+	char 	*p = line;
+	char 	*s = syntax;
+	int		cur_col = 0;
+
+	
+//	putp(tparm(set_a_foreground, 0));
 
 	while(*p) {
+		if(*s != 127 && *s != cur_col) {
+			putp(tparm(set_a_foreground, *s));
+			cur_col = *s;
+		}
+		s++;
 		putchar(*p++);
 		col++;
 		if(col == width) {
@@ -90,18 +105,8 @@ void show_line() {
 		putp(carriage_return);
 		putp(cursor_down);
 	}
-}
 
-/*
- * Get back to the very start of our line so we can redraw...
- */
-void goto_origin() {
-	putp(carriage_return);
-	col = 0;
-	while(row > 0) {
-		putp(cursor_up);
-		row--;
-	}
+	if(cur_col != 0) putp(tparm(set_a_foreground, 0));
 }
 
 /*
@@ -140,11 +145,33 @@ void restore_pos() {
 	move_to(srow, scol);
 }
 
-void redraw_line(int blank) {
+
+
+
+void redraw_line() {
+	static int alloc_size = 0;
+
+	// Make sure we have enough memory for the syntax
+	// highlighting
+	if(line_len > alloc_size) {
+		alloc_size = line_len + 256;
+		syntax = realloc(syntax, alloc_size);
+		memset(syntax, 127, line_len);
+	}
+
+	// TODO: flag to say no syntax check
+	int i;
+
+	for(i=0; i < line_len; i++) {
+		if(i%6 == 1) {
+			syntax[i] = i%7;
+		}
+	}
+
 	save_pos();
-	goto_origin();
+	move_to(0, 0);
 	show_line();
-	if(blank) putp(clr_eol);
+	putp(clr_eol);
 	restore_pos();
 }
 
@@ -158,9 +185,7 @@ void move_back() {
 		if(have_multi_move) {
 			putp(tparm(parm_right_cursor, width));
 		} else {
-			for(i=0; i < width; i++) {
-				putp(cursor_right);
-			}
+			for(i=0; i < width; i++) putp(cursor_right);
 		}
 		col = width-1;
 		row--;
@@ -351,9 +376,7 @@ int	read_key() {
 	fprintf(stderr, "aaarrgg\n");
 }
 
-
-int main() {
-
+int readline(lua_State *L) {
 	int		rc;
 	char	*temp;
 	char	*termtype = getenv("TERM");
@@ -401,9 +424,10 @@ int main() {
 
 	int t;
 	char *x = parm_down_cursor;
-	for(t=0; t < strlen(x); t++) {
-		printf("> %d  [%c] %d\n", t, x[t], x[t]);
-	}
+	printf("p=%p (%d)\n", x, strlen(x));
+//	for(t=0; t < strlen(x); t++) {
+//		printf("> %d  [%c] %d\n", t, x[t], x[t]);
+//	}
 
 	printf("arm=%d, eng=%d\n",  auto_right_margin, eat_newline_glitch);
 
@@ -417,10 +441,21 @@ int main() {
 
 	int c;
 
-	show_line();
-	fflush(stdout);
+	move_to((line_len/width), line_len%width);
+
+//	show_line();
+//	fflush(stdout);
+
+	int redraw = 1;
 
 	while(1) {
+		if(redraw) {
+			redraw_line();
+			redraw = 0;
+		}
+		fflush(stdout);
+
+
 		c = read_key();
 
 		switch(c) {
@@ -430,19 +465,13 @@ int main() {
 			break;
 
 		case KEY_RIGHT:
-			if(((row * width)+col) < line_len) {
-//				tputs(tgetstr("nd", NULL), 1, outfun);
-//				col++;
-				move_on();
-			}
+			if(((row * width)+col) < line_len) move_on();
 			break;
 
 		case KEY_DC:
 			if(((row * width)+col) < line_len) {
-				// TODO: check for end of string
-				int pos = (row * width) + col;
-				remove_char_at(pos);
-				redraw_line(1);
+				remove_char_at((row * width) + col);
+				redraw = 1;
 			}
 			break;
 
@@ -457,22 +486,46 @@ int main() {
 			//
 			if(((row * width)+col) > 0) {
 				move_back();
-				int pos = (row * width) + col;
-				remove_char_at(pos);
-				redraw_line(1);
+				remove_char_at((row * width) + col);
+				redraw = 1;
 			}
 			break;
 
 		default:
-			{
-				int pos = (row * width) + col;
-				insert_char_at(pos, c);
-				redraw_line(0);
-				move_on();
-			}
+			insert_char_at((row * width) + col, c);
+			move_on();
+			redraw = 1;
 		}
-		fflush(stdout);
 	}
 
 	return 0;
 }
+
+/*==============================================================================
+ * These are the functions we export to Lua...
+ *==============================================================================
+ */
+static const struct luaL_reg lib[] = {
+	{"readline", readline},
+	//  {"serialize", do_serialize},
+	//  {"unserialize", do_unserialize},
+	{NULL, NULL}
+};
+
+/*------------------------------------------------------------------------------
+* Main Library Entry Point ... we initialise all of our lua functions, then
+* we work out what our module name is and setup mosquitto and the service
+* handler
+*------------------------------------------------------------------------------
+*/
+int luaopen_unit(lua_State *L) {
+	// Initialise the library...
+	luaL_openlib(L, "rl", lib, 0);
+	return 1;
+}
+
+
+
+
+
+

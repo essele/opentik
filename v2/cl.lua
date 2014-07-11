@@ -5,27 +5,68 @@ package.cpath = "./lib/?.so;./c/?.so"
 
 require("readline");
 
+
+local FAIL, PARTIAL, PASS = 0, 1, 2
+
+--
+-- One we get a keyword we store it so that subsequent checking
+-- knows what we are doing.
+--
+-- If we successfully check the path, then we set the global
+-- so that subsequent field checking code will work
+--
+local v_cmd
+local v_path
+
+
+
+function check_path(key, value)
+	if(value) then return FAIL, FAIL end
+	if(key == "fred") then return PASS, FAIL end
+	return FAIL, FAIL
+end
+
+function check_field(key, value)
+	return PASS, PASS
+end
+
 --
 -- Sample command line editing code
 --
-local FAIL, PARTIAL, PASS = 0, 1, 2
 
 local cmds = {
-	["set"] = {},
-	["show"] = {},
+	["set"] = { [2] = check_path, ["*"] = check_field },
+	["show"] = { [2] = check_path },
+	["delete"] = { [2] = check_path },
 	["exit"] = {},
 	["help"] = {}
 }
 
-
 local checks = {}
 
+
 function check_command(key, value)
-	if(value) then return FAIL end
-	if(cmds[key]) then return PASS end
+	-- check for cached response first
+	if(v_cmd == key) then return PASS end
+
+	-- now prepare for proper check
+	checks = nil
+	v_cmd = nil
+	v_path = nil
+
+	if(value) then 
+		return FAIL 
+	end
+	if(cmds[key]) then
+		checks = cmds[key]
+		v_cmd = key
+		return PASS 
+	end
 
 	for k,_ in pairs(cmds) do
-		if(k:sub(1,#key) == key) then return PARTIAL end
+		if(k:sub(1,#key) == key) then 
+			return PARTIAL 
+		end
 	end
 	return FAIL
 end
@@ -53,7 +94,7 @@ function process_line(work, syntax)
 		if(not s) then
 			-- must be an error, so we will mark up to the space
 			s,e = work:find("^[^%s]+", spos)
-			ks, ke, kfail = s, e, fail
+			ks, ke, kfail = s, e, 1
 			goto done
 		end
 
@@ -93,23 +134,33 @@ function process_line(work, syntax)
 ::done::
 		spos = e + 1
 
-		local kcol = 1		-- default to red
+		local kcol, vcol = 1, 1		-- default to red
+		local rck, rcv
 
-		if(index == 1 and key) then
-			local rc = check_command(key)
-			if(rc == PASS) then kcol = 2 end
-			if(rc == PARTIAL) then kcol = 5 end
+		if(index == 1 and not kfail) then
+			rck = check_command(key)
+			if(rck == PASS) then kcol = 2 end
+			if(rck == PARTIAL) then kcol = 5 end
+		end
+
+		if(index > 1 and not kfail) then
+			local check_func = checks and (checks[index] or checks["*"])
+			if(check_func) then
+				rck, rcv = check_func(key, (vfail and nil) or value)
+				if(rcv == PASS) then vcol=6 end
+				if(rck == PASS) then kcol=6 end
+				if(rck == PARTIAL) then kcol=4 end
+			end
 		end
 
 		rl.set_syntax(syntax, ks, ke, kcol)
 
---		if(eq) then
---			rl.set_syntax(syntax, eq, eq, 4)
---		end
---		if(vs) then
---			local col = (vfail and 6) or 5
---			rl.set_syntax(syntax, vs, ve, col)
---		end
+		if(eq) then
+			rl.set_syntax(syntax, eq, eq, 4)
+		end
+		if(vs) then
+			rl.set_syntax(syntax, vs, ve, vcol)
+		end
 
 		index = index + 1
 	end
