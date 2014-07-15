@@ -2,11 +2,10 @@
 -- vi:filetype=lua
 --
 
-
 --
 -- Standard ipv4 addresses (eg. 1.2.3.4)
 --
-VALIDATOR["ipv4"] = function(v)
+VALIDATOR["Xipv4"] = function(v)
 	local a,b,c,d = string.match(v, "^(%d+)%.(%d+)%.(%d+).(%d+)$")
 
 	if(not a) then return false, "invalid ipv4 address" end
@@ -16,37 +15,12 @@ VALIDATOR["ipv4"] = function(v)
 	return true
 end
 
---
--- ipv4 addresses with a /net number on the end, (eg. 10.2.3.4/24)
---
-VALIDATOR["ipv4_net"] = function(v)
-	local a,b,c,d,e = string.match(v, "^(%d+)%.(%d+)%.(%d+).(%d+)/(%d+)$")
-
-	if(not a) then return false, "invalid ipv4/net address" end
-	a, b, c, d, e = tonumber(a), tonumber(b), tonumber(c), tonumber(d), tonumber(e)
-
-	if(a>255 or b>255 or c>255 or d>255 or e>32 ) then return false, "invalid ipv4/net address" end
-	return true
-end
-
---
--- ipv4 addresses with an optional /net number on the end (either of the above)
---
-VALIDATOR["ipv4_opt_net"] = function(v)
-	local rc, rv, err
-
-	rc, rv, err = pcall(VALIDATOR["ipv4"], v)
-	if(rv) then return true end
-	rc, rv, err = pcall(VALIDATOR["ipv4_net"], v)
-	if(rv) then return true end
-	return false, "invalid ipv4[/net] address"
-end
 
 --
 -- primary function for handling basic ethernet configuration
 --
 --
-local function cf_ethernet(path, key, config)
+local function cf_dnsmasq(path, key, config)
 	print("This is the cf_ethernet function")
 
 	print("PATH="..tostring(path))
@@ -95,31 +69,27 @@ if(not CONFIG.master["interface"]) then CONFIG.master["interface"] = {} end
 --
 -- our ethernet interface definition
 --
-CONFIG.master["interface"]["ethernet"] = {
-	--
-	-- main section for instances of ethernet interfaces...
-	--
-	_keep_with_children = 1,
-	["*"] = {
-		_function = cf_ethernet,
-		_syntax = "handle_eth_syntax",
-		["name"] = {
-			_type = "string"
+CONFIG.master["dnsmasq"] = {
+	_hidden = 1,
+	_function = cf_dnsmasq,
+	["dns"] = {
+		["resolvers"] = {
+			_type = "list/ipv4"
 		},
-		["address"] = {
-			_type = "ipv4_net",
-			_syntax = "handle_address_syntax",
-		},
-		["secondaries"] = {
-			_type = "list/ipv4_net",
-			_syntax = "handle_address_syntax",
-		},
-		["duplex"] = {
-			_type = "ipv4_net",
-		},
-		["speed"] = {
-			_type = "interface_speed"
+		["hosts"] = {
+			["*"] = {
+				["name"] = { _type = "hostname" },
+				["ipv4"] = { _type = "ipv4" },
+			}
 		},
 	},
+	["dhcp"] = {
+		["blag"] = {
+			_type = "string"
+		}
+	}
 }
+
+CONFIG.master["dhcp"] = { _alias = "/dnsmasq/dns" }
+CONFIG.master["dns"] = { _alias = "/dnsmasq/dhcp" }
 

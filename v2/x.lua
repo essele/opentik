@@ -48,8 +48,7 @@ function tokenize_line(work)
 	local pos = 1
 	while(pos < #work) do
 		local s, e, key, eq, value
-		local kerr = nil
-		local verr = nil
+		local kerr, verr = nil, nil
 
 		-- move past any leading space
 		s, e = work:find("^%s+", pos)
@@ -69,7 +68,7 @@ function tokenize_line(work)
 
 		-- now pull out a value if we have one...
 		if(eq == "=") then
-			s, e, value = work:find("^([^%s\"]+)%f[%s%z]", pos)
+			s, e, value = work:find("^([^%s\"]*)%f[%s%z]", pos)
 			if(not s) then
 				s, e, value = work:find("^\"([^\"]*)\"%f[%s%z]", pos)
 			end
@@ -99,6 +98,18 @@ function valid_field(key, value)
 	if(CACHE_fields[key] and CACHE_fields[key] == value) then
 		return OK, OK
 	end
+
+	if(key ~= "one" and key ~= "two") then
+		return FAIL, FAIL
+	end
+
+	if(key == "one") then
+		if(value ~= "fred") then return OK, FAIL end
+	end
+	if(key == "two") then
+		if(value ~= "bill") then return OK, FAIL end
+	end
+	
 
 	-- TODO: check if its a valid key
 	-- TODO: run the validator to check value
@@ -143,7 +154,7 @@ function cmd_set(tokens)
 		if(not token.kerr and not token.verr) then
 			local krc, vrc = valid_field(token.key, token.value)
 			token.kerr = ((krc ~= OK) and krc) or nil
-			token.verr = ((vrc ~= OK) and krc) or nil
+			token.verr = ((vrc ~= OK) and vrc) or nil
 		end
 		index = index + 1
 	end

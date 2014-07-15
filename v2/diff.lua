@@ -23,6 +23,7 @@ package.cpath = "./lib/?.so"
 -- global level packages
 require("lfs")
 require("table_utils")
+require("api")
 
 -- different namespace packages
 local base64 = require("base64")
@@ -66,6 +67,7 @@ end
 -- Basic lua functions for showing differences between two tables
 --
 
+--[[
 CONFIG.master["dns"] = { _alias = "/dnsmasq/dns" }
 CONFIG.master["dhcp"] = { _alias = "/dnsmasq/dhcp" }
 CONFIG.master["dnsmasq"] = {
@@ -104,7 +106,7 @@ CONFIG.master["lee"] = {
 		_function = function() print("Hello") end,
 		["X"] = { _type = "xx" }
 	}
-
+]]--
 CONFIG.active = {
 --	["Xdns"] = { STUB = 1 },
 --	["dhcp"] = { STUB = 1 },
