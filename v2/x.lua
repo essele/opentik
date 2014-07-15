@@ -1,5 +1,10 @@
 #!./luajit
 
+package.path = "./lib/?.lua"
+package.cpath = "./lib/?.so;./c/?.so"
+
+require("readline");
+
 
 local OK = 1
 local PARTIAL = 2
@@ -37,7 +42,6 @@ function get_matching(list, sofar)
 end
 
 
-
 function tokenize_line(work)
 	local tokens = {}
 	local index = 1
@@ -47,8 +51,12 @@ function tokenize_line(work)
 		local kerr = nil
 		local verr = nil
 
+		-- move past any leading space
+		s, e = work:find("^%s+", pos)
+		if(s) then pos = e + 1 end
+
 		-- key or key=
-		s, e, key, eq = work:find("^%s*%f[^%s%z]([%a%-%./_]+)(=?)", pos)
+		s, e, key, eq = work:find("^%f[^%s%z]([%a%-%./_]+)(=?)", pos)
 
 		if(not s) then 
 			-- ugh, all the rest is error
@@ -82,8 +90,38 @@ function tokenize_line(work)
 	return tokens
 end
 
+--
+-- See if the field is valid (for the given path) and then
+-- run the validator to check the value
+--
+local CACHE_fields
+function valid_field(key, value)
+	if(CACHE_fields[key] and CACHE_fields[key] == value) then
+		return OK, OK
+	end
+
+	-- TODO: check if its a valid key
+	-- TODO: run the validator to check value
+	
+	CACHE_fields[key] = value
+	return OK, OK
+end
+
+--
+-- See if the path is valid, and pull out the relevant part
+-- of the config
+--
+local CACHE_path
+local CACHE_master
 function valid_path(path)
-	return OK
+	if(path == CACHE_path) then return OK end
+
+	if(path:sub(1,1) == "/") then
+		CACHE_path = path
+		CACHE_fields = {}
+		return OK
+	end
+	return FAIL
 end
 
 function cmd_set(tokens)
@@ -97,6 +135,18 @@ function cmd_set(tokens)
 		tokens[2].kerr = rc
 		return 3
 	end
+
+	-- now for all remaining, these should be key=value
+	local index = 3
+	while(tokens[index]) do
+		local token = tokens[index]
+		if(not token.kerr and not token.verr) then
+			local krc, vrc = valid_field(token.key, token.value)
+			token.kerr = ((krc ~= OK) and krc) or nil
+			token.verr = ((vrc ~= OK) and krc) or nil
+		end
+		index = index + 1
+	end
 end
 
 
@@ -109,24 +159,25 @@ local cmds = {
 
 
 function syntax_check(tokens)
-	local index = 1
 	local cmd, rc
+	local index
 
 	-- check our key is a full match for a command, if partial then mark
 	cmd = tokens[1] and not tokens[1].kerr and not tokens[1].value and tokens[1].key
 	if(not cmd) then goto failrest end
 
-	rc = get_matching(keys(cmds), tokens[1].key)
-	if(rc ~= OK) then
-		tokens[1].kerr = rc
-		index = 2
-		goto failrest
+	-- check full match first, then partials...
+	if(not cmds[cmd]) then
+		rc = get_matching(keys(cmds), tokens[1].key)
+		if(rc ~= OK) then
+			tokens[1].kerr = rc
+			index = 2
+			goto failrest
+		end
 	end
 
 	-- now run the command specific checker
 	index = cmds[cmd](tokens)
-
-		
 	
 ::failrest::
 	while(tokens[index]) do
@@ -136,15 +187,38 @@ function syntax_check(tokens)
 	end
 end
 
+function process_line(work, syntax)
+	local toks = tokenize_line(work)
+	syntax_check(toks)
+	
+	for _, t in ipairs(toks) do
+		local col = 1
+		-- key first
+		if(t.kerr == PARTIAL) then col = 2 
+		elseif(t.kerr == FAIL) then col = 3 end
 
-local toks = tokenize_line("set blah fred=10 blsah=hello ghghgh=\"abf def\"")
-syntax_check(toks)
+		rl.set_syntax(syntax, t.ks, t.ke, col)
 
---[[
+		-- value
+		col = 1
+		if(t.value) then
+			if(t.verr == PARTIAL) then col = 2
+			elseif(t.verr == FAIL) then col = 3 end
+	
+			rl.set_syntax(syntax, t.vs, t.ve, col)
+		end
+	end
+end
+
+CACHE_path = nil
+CACHE_fields = {}
+
+
+rl.readline(process_line)
+
 for i,v in ipairs(toks) do
 	print("----")
 	for kk,vv in pairs(v) do
 		print("k="..kk.." v="..vv)
 	end
 end
-]]--
