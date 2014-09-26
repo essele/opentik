@@ -44,8 +44,19 @@ end
 
 --
 -- For each item (fields and containers) we return an iterator covering
--- the ones that were added, remove or changed.
+-- the ones that were added, remove or changed. (or all)
 --
+function each_element(config)
+	local dc = config.dc or {}
+	local last
+
+	return function()
+		while(1) do
+			last = next(dc, last)
+			return last
+		end
+	end
+end
 function each_added(config)
 	local ac, dc = config.ac or {}, config.dc or {}
 	local last

@@ -472,6 +472,16 @@ function show_list(aa, bb, label, indent, dump)
 end
 
 --
+-- Do we have any fields set to show?
+--
+function has_set_fields(a, b, master)
+	for k in each_field(master) do
+		if((a and a[k]) or (b and b[k])) then return true end
+	end
+	return false
+end
+
+--
 -- Display the non-container items from within a given node and
 -- show if they are added/removed/changed
 --
@@ -528,7 +538,7 @@ function show_config(path, a, b, master, orig_a, orig_b, indent, parent)
 	end
 
 	-- first the fields
-	if(parent and each_field(master)()) then
+	if(parent and has_set_fields(a, b, master)) then
 		local mode = " "
 		if(a and not b) then mode = "-" end
 		if(b and not a) then mode = "+" end
@@ -987,35 +997,35 @@ end
 prepare_master()
 
 
---a, b = get_real_path("/dns/abc")
---print("path="..a.."   stub="..b)
---os.exit(1)
---
 CONFIG.delta = copy_table(CONFIG.active)
 
 --revert_node("/dhcp/a/fred")
 --delete_node("/dhcp")
-set_config("/dns/abc", { yes="HELLO", comment={ "", "new item", "" }})
-set_config("/dhcp", { blah = 1 })
-set_config("/dhcp/one", { fred = 45 })
-set_config("/dns", { billy = "/etc/passwd" })
-set_config("/lee", { X = 4567 })
-set_config("/interface/ethernet/0", { address = "1.2.3.4/24" })
+--set_config("/dns/abc", { yes="HELLO", comment={ "", "new item", "" }})
+--set_config("/dhcp", { blah = 1 })
+--set_config("/dhcp/one", { fred = 45 })
+--set_config("/lee", { X = 4567 })
+--set_config("/interface/ethernet/0", { address = "1.2.3.4/24" })
+
+set_config("/dns", { resolvers = { "1.2.3.4", "4.5.6.7" } } )
+set_config("/dns/host/pbx", { ipv4 = "3.3.3.3", aliases = { "phone", "blah" }})
+set_config("/dns/host/gate", { ipv4 = "4.4.4.4" })
+set_config("/dns/host/joe", { ipv4 = "4.4.5.6" })
 
 --set_config("X", { fred="" })
 --
 commit()
 print(show_config("/"))
 
-delete_node("/interface/ethernet/0")
+--delete_node("/interface/ethernet/0")
 --dump(CONFIG.delta)
-commit()
+--commit()
 
 --delete_node("/dns")
 --commit_delta()
 
 print("XXX")
-print(dump_config(CONFIG.active))
+--print(dump_config(CONFIG.active))
 --dump(CONFIG.active)
 
 --print(show_config(CONFIG.active, CONFIG.delta, CONFIG.master))

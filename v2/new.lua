@@ -341,7 +341,7 @@ function show_config(delta, master, indent, parent, p_op)
 
 		if(mc._show_together) then
 			show_config(dc, mc, indent, k, operation)
-		elseif(not mc._hidden) then
+		elseif(not mc._hiddenX) then
 			print(operation .. " " .. string.rep(" ", indent) .. label .. " {")
 			show_config(dc, mc, indent+4)
 			print(operation .. " " .. string.rep(" ", indent) .. "}")
@@ -355,7 +355,7 @@ function dump_config(delta, master, indent)
 	end
 	for k, dc, mc in each_container(delta, master) do
 		if(mc._link) then mc = mc._link_mc end
-		if(not mc._hidden) then
+		if(not mc._hiddenX) then
 			print("  " .. string.rep(" ", indent) .. k .. " {")
 			dump_config(dc, mc, indent+4)
 			print("  " .. string.rep(" ", indent) .. "}")
@@ -798,12 +798,17 @@ function alter_config(delta, master, path, fields)
 			print("invalid link path: " .. path)
 			return false
 		end
+		print("after getnode: "..path.." (orig="..orig_path..") dc="..tostring(dc))
 	end
 
 	-- if we are a delete operation then we need to recurse
 	-- into all children and mark them, and then clear out the fields
 	if(not fields) then
+		print("DELETING: before")
+		dump(dc)
 		delete_config(dc, mc)
+		print("AFTER: before")
+		dump(dc)
 		goto cleanup
 	end
 
@@ -1237,8 +1242,8 @@ end
 prepare_master(CONFIG.master)
 --dump(CONFIG.master)
 
---CONFIG.delta = copy_table(CONFIG.active)
 CONFIG.active = read_config("sample", CONFIG.master)
+CONFIG.delta = copy_table(CONFIG.active)
 --show_config(CONFIG.active, CONFIG.master)
 --alter_config(CONFIG.delta, CONFIG.master, "/fred", { "lee=tttt" })
 --commit_delta(CONFIG.delta, CONFIG.master, CONFIG.active, CONFIG)
@@ -1250,14 +1255,14 @@ CONFIG.active = read_config("sample", CONFIG.master)
 --alter_config(CONFIG.delta, CONFIG.master, "/fred/xxx", { "aaa=30", "bbb=20", "ccc=10" })
 --alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/0", { "secondaries=1.2.3.5",
 --										"secondaries=2.3.4.5" })
---alter_config(CONFIG.delta, CONFIG.master, "/fred/new/dns", { "set=55" })
+alter_config(CONFIG.delta, CONFIG.master, "/fred/new/dns" )
 --alter_config(CONFIG.delta, CONFIG.master, "/fred/new/dns", { "resolvers=r4" })
 --alter_config(CONFIG.delta, CONFIG.master, "/interface/ethernet/2", { "address=1.2.3.4/3" })
 --alter_config(CONFIG.delta, CONFIG.master, "/test/test2/test3/dhcp", { "lee=abcdabcd" })
 --dump(CONFIG.delta)
 
 print("=================")
---commit_delta(CONFIG.delta, CONFIG.master, CONFIG.active, CONFIG)
+commit_delta(CONFIG.delta, CONFIG.master, CONFIG.active, CONFIG)
 
 --dump(CONFIG.delta)
 --show_config(CONFIG.delta, CONFIG.master)

@@ -17,57 +17,40 @@ end
 
 
 --
--- primary function for handling basic ethernet configuration
---
+-- primary function for handling dnsmasq configuration. We don't really deal
+-- with adds and removes here, we just create the needed config and (re)start the
+-- process.
 --
 local function cf_dnsmasq(path, key, config)
-	print("This is the cf_ethernet function")
+	print("This is the cf_dnsmasq function")
 
 	print("PATH="..tostring(path))
 	print("KEY="..tostring(key))
 	dump(config)
 
-	for key,value in each_added(config) do
-		print("Added key="..key)
---		dump(value)
-	end	
+	local cf = config.dc
 
-	-- Option 1: DELETE ... if we are deleting an interface config then
-	-- 			 we need to exit afterwards, we will be called again
-	-- 			 for other operations.
-	--
-	if(is_deleted(config)) then
-		-- unconfigure the interface
-		print("REMOVED INTERFACE " .. "eth" .. key)
-		return true
+	-- get our resolvers...
+	local resolvers = cf.dns and cf.dns.resolvers;
+	if(resolvers) then
+		for i,v in ipairs(resolvers) do
+			print("RESOLVER: ["..i.."] -- "..v)
+		end
 	end
 
-	-- Option 2: ADD ... we have setup a new interface, so this is a simple
-	-- 			 creation with the right parameters
-	--
-	if(is_added(config)) then
-		print("NEW INTERFACE CREATED " .. "eth" .. key)
---		error("oh dear")
-		return true
+	-- host entries
+	local hosts = cf.dns and cf.dns.host;
+	if(hosts) then
+		for k,v in pairs(hosts) do
+			print("HOST: " .. k .. " IP="..v.ipv4)
+		end
 	end
-
-	-- Option 3: CHANGE ... we will have changed (or added/removed) an
-	-- 			 option. 
-	-- 
-	-- TODO: is it easier just to go through the ADD process here as if
-	-- 		 we were creating a new interface with these new settings?
-	
 
 	return true
 end
 
 --
--- make sure we have the required parent in the master structure
---
-if(not CONFIG.master["interface"]) then CONFIG.master["interface"] = {} end
-
---
--- our ethernet interface definition
+-- our dnsmasq (dns/dhcp) definition
 --
 CONFIG.master["dnsmasq"] = {
 	_hidden = 1,
@@ -76,10 +59,11 @@ CONFIG.master["dnsmasq"] = {
 		["resolvers"] = {
 			_type = "list/ipv4"
 		},
-		["hosts"] = {
+		["host"] = {
+			_keep_with_children = 1,
 			["*"] = {
-				["name"] = { _type = "hostname" },
 				["ipv4"] = { _type = "ipv4" },
+				["aliases"] = { _type = "list/hostname" },
 			}
 		},
 	},
@@ -90,6 +74,6 @@ CONFIG.master["dnsmasq"] = {
 	}
 }
 
-CONFIG.master["dhcp"] = { _alias = "/dnsmasq/dns" }
-CONFIG.master["dns"] = { _alias = "/dnsmasq/dhcp" }
+CONFIG.master["dns"] = { _alias = "/dnsmasq/dns" }
+CONFIG.master["dhcp"] = { _alias = "/dnsmasq/dhcp" }
 
