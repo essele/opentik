@@ -21,30 +21,53 @@ function iptables()
 end
 
 --
--- Create a copy of the key/value list
+-- Create a copy of the key/value list (or table)
 --
-function copy_kv(s)
+function copy_table(t)
 	local rc = {}
-	for k,v in pairs(s) do rc[k] = v end
+	for k, v in pairs(t) do
+		if(type(v) == "table") then rc[k] = copy_table(v)
+		else rc[k] = v end
+	end
 	return rc
 end
 
 --
--- Return the sorted keys from a table (or two)
+-- Return the uniq sorted valies from a table (or two)
+--
+function sorted_values(kv1, kv2)
+	local list = {}
+	local uniq = {}
+
+	if kv1 ~= nil then for _,v in pairs(kv1) do uniq[v] = 1 end end
+	if kv2 ~= nil then for _,v in pairs(kv2) do uniq[v] = 1 end end
+	for k,_ in pairs(uniq) do table.insert(list, k) end
+	table.sort(list)
+	return list
+end
+
+--
+-- Return the uniq sorted keys from a table (or two)
 --
 function sorted_keys(kv1, kv2)
 	local list = {}
 	local uniq = {}
 
-	if kv1 ~= nil then
-		for k,_ in pairs(kv1) do uniq[k] = 1 end
-	end
-	if kv2 ~= nil then
-		for k,_ in pairs(kv2) do uniq[k] = 1 end
-	end
+	if kv1 ~= nil then for k,_ in pairs(kv1) do uniq[k] = 1 end end
+	if kv2 ~= nil then for k,_ in pairs(kv2) do uniq[k] = 1 end end
 	for k,_ in pairs(uniq) do table.insert(list, k) end
 	table.sort(list)
 	return list
+end
+
+--
+-- Find a given element within a list
+--
+function is_in_list(list, item)
+	for _,k in ipairs(list) do
+		if k == item then return true end
+	end
+	return false
 end
 
 --
@@ -76,12 +99,7 @@ function find_master_key(k)
 	--
 	-- Revert back to just wildcards...
 	--
-	local wc = k:gsub("/%*[^/]+", "/*")
-	--
-	-- Now see if we have a match
-	--
-	return wc
-	--return master[wc] or nil
+	return k:gsub("/%*[^/]+", "/*")
 end
 
 
@@ -184,87 +202,178 @@ master["iptables"] = { ["function"] = iptables }
 master["iptables/*"] = { ["style"] = "iptables_primary" }
 master["iptables/*/*"] = { ["style"] = "iptables_chain" }
 master["iptables/*/*/policy"] = { ["type"] = "iptables_policy" }
-master["iptables/*/*/*"] = { ["style"] = "iptables_rulenum", ["type"] = "iptables_rule" }
+master["iptables/*/*/rule"] = { 	["with_children"] = 1 }
+master["iptables/*/*/rule/*"] = { 	["style"] = "iptables_rulenum", 
+									["type"] = "iptables_rule",
+									["quoted"] = 1 }
+
+master["dns/forwarder/server"] = { ["type"] = "dns_forward", ["list"] = 1 }
 
 
 current["interface/ethernet/*0/ip"] = "192.168.95.1/24"
 current["interface/ethernet/*1/ip"] = "192.168.95.2/24"
 current["interface/ethernet/*0/mtu"] = 1500
 
+current["dns/forwarder/server"] = { "one", "two", "three" }
 
 
-
-new = copy_kv(current)
+new = copy_table(current)
+new["interface/ethernet/*1/ip"] = "192.168.95.4/24"
 new["interface/ethernet/*2/ip"] = "192.168.95.33"
-new["interface/ethernet/*0/mtu"] = 1498
+new["interface/ethernet/*0/mtu"] = nil
 
 new["iptables/*filter/*FORWARD/policy"] = "ACCEPT"
-new["iptables/*filter/*FORWARD/*10"] = "-s 12.3.4 -j ACCEPT"
-new["iptables/*filter/*FORWARD/*20"] = "-d 2.3.4.5 -j DROP"
+new["iptables/*filter/*FORWARD/rule/*10"] = "-s 12.3.4 -j ACCEPT"
+new["iptables/*filter/*FORWARD/rule/*20"] = "-d 2.3.4.5 -j DROP"
+
+new["dns/forwarder/server"] = { "one", "three", "four" }
 
 --x = find_master("interface/ethernet/*2/ip")
 --print(tostring(x))
 
-rc = node_list("iptables/*", new)
-for i,v in ipairs(rc) do
-	print("i="..i.." v="..v)
-end
-rc = node_list("iptables/*filter/*FORWARD/*", new)
-for i,v in ipairs(rc) do
-	print("i="..i.." v="..v)
-end
-
-rc = node_list("", master)
-for i,v in ipairs(rc) do
-	print("i="..i.." v="..v)
-end
-
-
-
-
-
 --
--- To show the structure we build a combined hash so we can use node_list
--- recursively
+-- Return a hash containing a key for every node that is defined in
+-- the original hash, values for end nodes, 1 for all others.
 --
-local combined = {}
-for k,_ in pairs(current) do combined[k] = 1 end	
-for k,_ in pairs(new) do combined[k] = 1 end	
+function hash_of_all_nodes(input)
+	local rc = {}
 
-function show(sp, combined, indent, parent)
-	local indent = indent or 0
-	local parent = parent or ""
-	local indent_add = 4
-
-	local nodes = node_list(sp, combined)
-	for i,key in ipairs(nodes) do
-		local dispkey = key:gsub("^%*", "")
-		local newsp = sp .. key .. "/"
-		local mkey = find_master_key(sp .. key)
-
-		if master[mkey] and master[mkey]["type"] then
-			--
-			-- We are a field, so we can show our value...
-			--
-			print(string.rep(" ", indent) .. parent .. dispkey .. " = (todo)")
-		else
-			--
-			-- We must be a container
-			--
-			if master[mkey] and master[mkey]["with_children"] then
-				parent = parent .. dispkey .. " "
-				show(newsp, combined, indent, parent)
-			else
-				print(string.rep(" ", indent) .. parent .. dispkey .. " {")
-				show(newsp, combined, indent+4)
-				print(string.rep(" ", indent) .. "}")
-			end
+	for k,v in pairs(input) do
+		rc[k] = v
+		while k:len() > 0 do
+			k = k:gsub("/?[^/]+$", "")
+			rc[k] = 1
 		end
 	end
-end	
+	return rc
+end
+
+--
+-- The main show function, using nested functions to keep the code
+-- cleaner and more readable
+--
+function show(current, new, kp)
+	kp = kp or ""
+	--
+	-- Build up a full list of nodes, and a combined list of all
+	-- end nodes so we can process quickly
+	--
+	local old_all = hash_of_all_nodes(current)
+	local new_all = hash_of_all_nodes(new)
+	local combined = {}
+	for k,_ in pairs(current) do combined[k] = 1 end	
+	for k,_ in pairs(new) do combined[k] = 1 end	
+
+	--
+	-- Given a key path work out the disposition and correct
+	-- value to show
+	--
+	function disposition_and_value(kp)
+		local disposition = " "
+		local value = new_all[kp]
+		if old_all[kp] ~= new_all[kp] then
+			if old_all[kp] == nil then
+				disposition = "+"
+			elseif new_all[kp] == nil then
+				disposition = "-"
+				value = old_all[kp]
+			else
+				disposition = "|"
+			end
+		end
+		return disposition, value
+	end
+
+	--
+	-- Display a list field
+	--
+	function display_list(mc, indent, parent, kp)
+		local rc = ""
+		local key = kp:gsub("^.*/%*?([^/]+)$", "%1")
+		local old_list, new_list = old_all[kp] or {}, new_all[kp] or {}
+		
+		local all_keys = sorted_values(old_list, new_list)
+		for _,value in ipairs(all_keys) do
+			local disposition = " "
+			if not is_in_list(old_list, value) then
+				disposition = "+"
+			elseif not is_in_list(new_list, value) then
+				disposition = "-"
+			end
+			rc = rc .. string.format("%s %s%s%s %s\n", disposition, 
+							string.rep(" ", indent), parent, key, value)
+		end
+		return rc
+	end
+
+	--
+	-- Display a value field, calling display_list if it's a list
+	--
+	function display_value(mc, indent, parent, kp)
+		if(mc["list"]) then return display_list(mc, indent, parent, kp) end
+	
+		local disposition, value = disposition_and_value(kp)
+		local key = kp:gsub("^.*/%*?([^/]+)$", "%1")
+		if(mc["quoted"]) then value = "\"" .. value .. "\"" end
+		return string.format("%s %s%s%s %s\n", disposition, 
+						string.rep(" ", indent), parent, key, value)
+	end
+
+	--
+	-- Display a container header or footer
+	--
+	function container_header_and_footer(indent, parent, kp)
+		local disposition, value = disposition_and_value(kp)
+		local key = kp:gsub("^.*/%*?([^/]+)$", "%1")
+		local header = string.format("%s %s%s%s {\n", disposition, 
+						string.rep(" ", indent), parent, key)
+		local footer = string.format("%s %s}\n", disposition, string.rep(" ", indent))
+	
+		return header, footer
+	end
+
+	--
+	-- Main recursive show function
+	--
+	function int_show(kp, combined, indent, parent)
+		local indent = indent or 0
+		local parent = parent or ""
+		local indent_add = 4
+
+		local nodes = node_list(kp, combined)
+		for i,key in ipairs(nodes) do
+			local dispkey = key:gsub("^%*", "")
+			local newkp = kp .. key
+			local mc = master[find_master_key(newkp)] or {}
+			local disposition, value = disposition_and_value(newkp)
+
+			if mc["type"] then
+				--
+				-- We are a field, so we can show our value...
+				--
+				io.write(display_value(mc, indent, parent, newkp))
+			else
+				--
+				-- We must be a container
+				--
+				if mc["with_children"] then
+					parent = parent .. dispkey .. " "
+					int_show(newkp .. "/", combined, indent, parent)
+				else
+					local header, footer = container_header_and_footer(indent, parent, newkp)
+					io.write(header)
+					int_show(newkp .. "/", combined, indent+4)
+					io.write(footer)
+				end
+			end
+		end
+	end	
+
+	int_show(kp, combined)
+end
 
 
-show("", combined)
+show(current, new)
 
 
 --[[
