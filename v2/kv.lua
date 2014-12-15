@@ -3,6 +3,15 @@
 --
 -- Key/Value pair implementation using slashes
 --
+--
+--
+
+package.path = "./lib/?.lua"
+package.cpath = "./lib/?.so"
+
+-- different namespace packages
+local base64 = require("base64")
+
 
 local master={}
 local current={}
@@ -208,6 +217,7 @@ master["iptables/*/*/rule/*"] = { 	["style"] = "iptables_rulenum",
 									["quoted"] = 1 }
 
 master["dns/forwarder/server"] = { ["type"] = "dns_forward", ["list"] = 1 }
+master["dns/file"] = { ["type"] = "file/text" }
 
 
 current["interface/ethernet/*0/ip"] = "192.168.95.1/24"
@@ -215,6 +225,7 @@ current["interface/ethernet/*1/ip"] = "192.168.95.2/24"
 current["interface/ethernet/*0/mtu"] = 1500
 
 current["dns/forwarder/server"] = { "one", "two", "three" }
+current["dns/file"] = "afgljksdhfglkjsdhf glsjdfgsdfg\nsdfgkjsdfkljg\nsdfgsdg\nsdfgsdfg\n"
 
 
 new = copy_table(current)
@@ -284,6 +295,50 @@ function show(current, new, kp)
 		return disposition, value
 	end
 
+
+	--
+	-- Handle the display of both dinay and text files
+	--
+	function display_file(mc, indent, parent, kp)
+		local disposition, value = disposition_and_value(kp)
+
+		local rc = ""
+		local key = kp:gsub("^.*/%*?([^/]+)$", "%1")
+		local ftype = mc["type"]:sub(6)
+
+		function op(disposition, indent, label, value)
+			local rhs = value and (label .. " " .. value) or label
+			return string.format("%s %s%s\n", disposition, string.rep(" ", indent), rhs)
+		end
+
+		rc = op(disposition, indent, parent..key, "<"..ftype..">")
+		if(ftype == "binary") then
+			local binary = base64.enc(value)
+			for i=1, #binary, 76 do
+				rc = rc .. op(disposition, indent+4, binary:sub(i, i+75))
+				if(not dump and i >= 76*3) then
+					rc = rc .. op(disposition, indent+4, "... (total " .. #binary .. " bytes)")
+					break
+				end
+			end
+			if(dump) then rc = rc .. op(disposition, indent+4, "<eof>") end
+		elseif(ftype == "text") then
+			local lc = 0
+			for line in (value .. "\n"):gmatch("(.-)\n") do
+				rc = rc .. op(disposition, indent+4, "|"..line)
+				if(not dump) then
+					lc = lc + 1
+					if(lc >= 4) then 
+						rc = rc .. op(disposition, indent+4, "... <more>") 
+						break
+					end
+				end
+			end
+			if(dump) then rc = rc .. op(mode, indent+4, "<eof>") end
+		end
+		return rc
+	end
+
 	--
 	-- Display a list field
 	--
@@ -300,6 +355,7 @@ function show(current, new, kp)
 			elseif not is_in_list(new_list, value) then
 				disposition = "-"
 			end
+			if(mc["quoted"]) then value = "\"" .. value .. "\"" end
 			rc = rc .. string.format("%s %s%s%s %s\n", disposition, 
 							string.rep(" ", indent), parent, key, value)
 		end
@@ -311,6 +367,7 @@ function show(current, new, kp)
 	--
 	function display_value(mc, indent, parent, kp)
 		if(mc["list"]) then return display_list(mc, indent, parent, kp) end
+		if(mc["type"]:sub(1,5) == "file/") then return display_file(mc, indent, parent, kp) end
 	
 		local disposition, value = disposition_and_value(kp)
 		local key = kp:gsub("^.*/%*?([^/]+)$", "%1")
