@@ -70,6 +70,15 @@ function sorted_keys(kv1, kv2)
 end
 
 --
+-- Add the second list to the first (updating the first)
+--
+function add_to_list(l1, l2)
+	for _,v in ipairs(l2) do
+		table.insert(l1, v)
+	end
+end
+
+--
 -- Find a given element within a list
 --
 function is_in_list(list, item)
@@ -137,12 +146,18 @@ end
 -- Given a master key, work back through the elements until we find one with
 -- a function, then return that key.
 --
+-- If we find a delegate instead of a function then we return the delegate
+-- along with the location the delegate was found.
+--
 function find_master_function(wk) 
 	while wk:len() > 0 do
 		print("Looking at ["..wk.."]")
 		wk = wk:gsub("/?[^/]+$", "")
 		if master[wk] and master[wk]["function"] then
-			return wk
+			return wk, wk
+		end
+		if master[wk] and master[wk]["delegate"] then
+			return master[wk]["delegate"], wk
 		end
 	end
 	return nil
@@ -157,24 +172,19 @@ function build_work_list()
 	local sorted = sorted_keys(new, current)
 
 	while #sorted > 0 do
-		print("Finding work " .. #sorted)
 		local key = sorted[1]
 
-		print("Key is "..key)
 		if new[key] ~= current[key] then
-			print("We have work for: " .. key)
 			local mkey = find_master_key(key)
 
-			print("mkey="..tostring(mkey))
-			local fkey = find_master_function(mkey)
-			print("mkey="..tostring(mkey).." fkey="..tostring(fkey))
+			local fkey, origkey = find_master_function(mkey)
 			if fkey then
-				rc[fkey] = remove_prefixed(sorted, fkey)
+				if rc[fkey] == nil then rc[fkey] = {} end
+				add_to_list(rc[fkey], remove_prefixed(sorted, origkey))
 			else
 				print("No function found for " .. key)
 			end
 		else
-			print("No work to do for " .. key)
 			table.remove(sorted, 1)
 		end
 	end
@@ -196,11 +206,11 @@ end
 
 
 
-
+master["interface"] = {}
 master["interface/ethernet"] = { ["function"] = callme,
 								 ["depends"] = { "iptables" },
 								 ["with_children"] = 1 }
-master["interface/ethernet/*"] = { ["style"] = "ipv4" }
+master["interface/ethernet/*"] = { ["style"] = "ethernet_if" }
 master["interface/ethernet/*/ip"] = { ["type"] = "ipv4" }
 master["interface/ethernet/*/mtu"] = { ["type"] = "mtu" }
 
@@ -216,8 +226,14 @@ master["iptables/*/*/rule/*"] = { 	["style"] = "iptables_rulenum",
 									["type"] = "iptables_rule",
 									["quoted"] = 1 }
 
+master["dns"] = { ["function"] = "xxx" }
+
 master["dns/forwarder/server"] = { ["type"] = "dns_forward", ["list"] = 1 }
 master["dns/file"] = { ["type"] = "file/text" }
+
+master["dhcp"] = { 	["delegate"] = "dns" }
+master["dhcp/flag"] = { ["type"] = "string" }
+
 
 
 current["interface/ethernet/*0/ip"] = "192.168.95.1/24"
@@ -238,9 +254,7 @@ new["iptables/*filter/*FORWARD/rule/*10"] = "-s 12.3.4 -j ACCEPT"
 new["iptables/*filter/*FORWARD/rule/*20"] = "-d 2.3.4.5 -j DROP"
 
 new["dns/forwarder/server"] = { "one", "three", "four" }
-
---x = find_master("interface/ethernet/*2/ip")
---print(tostring(x))
+new["dhcp/flag"] = "hello"
 
 --
 -- Return a hash containing a key for every node that is defined in
@@ -260,11 +274,102 @@ function hash_of_all_nodes(input)
 end
 
 --
+-- If we dump the config then we only write out the set items
+--
+function dump(config)
+	for k,v in pairs(config) do
+		local mc = master[find_master_key(k)] or {}
+
+		if mc["list"] then
+			io.write(string.format("%s: <list>\n", k))
+			for _,l in ipairs(v) do
+				io.write(string.format("\t|%s\n", l))
+			end
+			io.write("\t<end>\n")
+		elseif mc["type"]:sub(1,5) == "file/" then
+			io.write(string.format("%s: <%s>\n", k, mc["type"]))
+			local ftype = mc["type"]:sub(6)
+			if ftype == "binary" then
+				local binary = base64.enc(v)
+				for i=1, #binary, 76 do
+					io.write(string.format("\t|%s\n", binary:sub(i, i+75)))
+				end
+			elseif ftype == "text" then
+				for line in (v .. "\n"):gmatch("(.-)\n") do
+					io.write(string.format("\t|%s\n", line))
+				end
+			end
+			io.write("\t<end>\n")
+		else 
+			io.write(string.format("%s: %s\n", k, v))
+		end
+	end
+end
+
+--
+-- Support re-loading the config from a dump file
+--
+function import(filename)
+	local rc = {}
+    local line, file
+
+	function decode(data, ftype)
+		if ftype == "file/binary" then
+			return base64.dec(data)
+		elseif ftype == "file/text" then
+			return data
+		else
+			return nil
+		end
+	end
+
+	file = io.open(filename)
+	-- TODO: handle errors	
+	
+	while(true) do
+		line = file:read()
+		if not line then break end
+
+		local kp, value = string.match(line, "^([^:]+): (.*)$")
+		local mc = master[find_master_key(kp)] or {}
+		local vtype = mc["type"]
+
+		if mc["list"] then
+			local list = {}
+			while 1 do
+				local line = file:read()
+				if line:match("^%s+<end>$") then
+					rc[kp] = list
+					break
+				end
+				table.insert(list, (line:gsub("^%s+|", "")))
+			end
+		elseif vtype:sub(1,5) == "file/" then
+			local data = ""
+			while 1 do
+				local line = file:read()
+				if line:match("^%s+<end>$") then
+					rc[kp] = decode(data, vtype)
+					break
+				end
+				line = line:gsub("^%s+|", "")
+				if vtype == "file/text" and #line > 0 then line = line .. "\n" end
+				data = data .. line
+			end
+		else
+			rc[kp] = value
+		end
+	end
+	return rc
+end
+
+--
 -- The main show function, using nested functions to keep the code
 -- cleaner and more readable
 --
 function show(current, new, kp)
 	kp = kp or ""
+
 	--
 	-- Build up a full list of nodes, and a combined list of all
 	-- end nodes so we can process quickly
@@ -316,25 +421,21 @@ function show(current, new, kp)
 			local binary = base64.enc(value)
 			for i=1, #binary, 76 do
 				rc = rc .. op(disposition, indent+4, binary:sub(i, i+75))
-				if(not dump and i >= 76*3) then
+				if(i >= 76*3) then
 					rc = rc .. op(disposition, indent+4, "... (total " .. #binary .. " bytes)")
 					break
 				end
 			end
-			if(dump) then rc = rc .. op(disposition, indent+4, "<eof>") end
 		elseif(ftype == "text") then
 			local lc = 0
 			for line in (value .. "\n"):gmatch("(.-)\n") do
 				rc = rc .. op(disposition, indent+4, "|"..line)
-				if(not dump) then
-					lc = lc + 1
-					if(lc >= 4) then 
-						rc = rc .. op(disposition, indent+4, "... <more>") 
-						break
-					end
+				lc = lc + 1
+				if(lc >= 4) then 
+					rc = rc .. op(disposition, indent+4, "... <more>") 
+					break
 				end
 			end
-			if(dump) then rc = rc .. op(mode, indent+4, "<eof>") end
 		end
 		return rc
 	end
@@ -430,16 +531,64 @@ function show(current, new, kp)
 end
 
 
-show(current, new)
+--
+-- Allow a particular value to be set
+--
+-- interface/ethernet/45/mtu = 100
+--
+-- for each element, try to find a fixed ref, if not look for "*"
+--
 
+function join(v1, v2, joiner)
+	return v1 .. ((#v1 > 0 and joiner) or "") .. v2
+end
+
+function set(kp, value)
+	local mp = ""
+	local rkp = ""
+	while(1) do
+		local k = kp:match("^([^/]+)/?")
+		if not k then break end
+
+		kp = kp:sub(#k + 2)
+		print("K = ["..k.."] .. kp=["..kp.."]")
+
+		local master_kp = join(mp, k, "/")
+		local master_wp = mp .. "/*"
+		print("MP = " .. mp)
+		if master[master_kp] then
+			mp = master_kp
+			rkp = join(rkp, k, "/")
+			print("found mp [" ..mp .. "]")
+			-- TODO: get type info and validate accordingly
+		elseif master[master_wp] then
+			mp = master_wp
+			rkp = join(rkp, "*"..k, "/")
+	
+			local mstyle = master[mp]["style"]
+			print("found mp [" ..mp .. "] .. style=" .. tostring(mstyle))
+			-- TODO: check name meets style...
+		end
+	end
+	print("rkp="..rkp)
+end
+
+
+set("interface/ethernet/0/mtu", 1234)
+
+--show(current, new)
+--dump(new)
+--local xx = import("sample")
+
+--show(xx, xx)
 
 --[[
 --
 -- Build the work list
 --
-local work_list = build_work_list()
+work_list = build_work_list()
 
-print("\n\n")
+--print("\n\n")
 --
 -- Now run through and check the dependencies
 --
@@ -463,5 +612,4 @@ for key, fields in pairs(work_list) do
 ::continue::
 end
 ]]--
-
 
