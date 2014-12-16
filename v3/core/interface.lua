@@ -30,7 +30,7 @@
 --
 --
 
-function callme(changes)
+local function ethernet_commit(changes)
 	print("Hello From Interface")
 
 	local state = process_changes(changes, "interface/ethernet/")
@@ -38,6 +38,17 @@ function callme(changes)
 	for _,v in ipairs(state.added) do print("Added: "..v) end
 	for _,v in ipairs(state.removed) do print("Removed: "..v) end
 	for _,v in ipairs(state.changed) do print("Changed: "..v) end
+	
+	return true
+end
+
+
+--
+--
+--
+local function pppoe_commit(changes)
+	print("PPPOE")
+	return true
 end
 
 
@@ -74,18 +85,30 @@ VALIDATOR["mtu"] = function(v)
 end
 
 
+
 --
 -- Main interface config definition
 --
 master["interface"] = {}
-master["interface/ethernet"] = 				{ ["commit"] = callme,
+master["interface/ethernet"] = 				{ ["commit"] = ethernet_commit,
 								 			  ["depends"] = { "iptables" }, 
 											  ["with_children"] = 1 }
-
 master["interface/ethernet/*"] = 			{ ["style"] = "ethernet_if" }
 master["interface/ethernet/*/ip"] = 		{ ["type"] = "ipv4" }
 master["interface/ethernet/*/mtu"] = 		{ ["type"] = "mtu" }
-master["interface/ethernet/fred"] = { ["type"] = "ipv4" }
-master["interface/ethernet/bill"] = { ["type"] = "ipv4" }
+--master["interface/ethernet/fred"] = { ["type"] = "ipv4" }
+--master["interface/ethernet/bill"] = { ["type"] = "ipv4" }
+
+master["interface/pppoe"] = 				{ ["commit"] = pppoe_commit,
+											  ["depends"] = { "interface/ethernet" },
+											  ["with_children"] = 1 }
+master["interface/pppoe/*"] =				{ ["style"] = "pppoe_if" }
+master["interface/pppoe/*/attach"] =		{ ["type"] = "ethernet_if" }
+master["interface/pppoe/*/default-route"] =	{ ["type"] = "OK" }
+master["interface/pppoe/*/mtu"] =			{ ["type"] = "mtu" }
+master["interface/pppoe/*/user-id"] =		{ ["type"] = "OK" }
+master["interface/pppoe/*/password"] =		{ ["type"] = "OK" }
+	
+
 
 

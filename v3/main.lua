@@ -54,12 +54,12 @@ master["test/lee"] = { ["type"] = "name" }
 
 
 
-current["interface/ethernet/*0/ip"] = "192.168.95.1/24"
-current["interface/ethernet/*1/ip"] = "192.168.95.2/24"
-current["interface/ethernet/*2/ip"] = "192.168.95.33"
-current["interface/ethernet/*2/mtu"] = 1500
-current["interface/ethernet/*0/mtu"] = 1500
-current["interface/ethernet/fred"] = "yep"
+--current["interface/ethernet/*0/ip"] = "192.168.95.1/24"
+--current["interface/ethernet/*1/ip"] = "192.168.95.2/24"
+--current["interface/ethernet/*2/ip"] = "192.168.95.33"
+--current["interface/ethernet/*2/mtu"] = 1500
+--current["interface/ethernet/*0/mtu"] = 1500
+--current["interface/ethernet/fred"] = "yep"
 
 current["dns/forwarder/server"] = { "one", "two", "three" }
 current["dns/file"] = "afgljksdhfglkjsdhf glsjdfgsdfg\nsdfgkjsdfkljg\nsdfgsdg\nsdfgsdfg\n"
@@ -70,9 +70,14 @@ current["dns/file"] = "afgljksdhfglkjsdhf glsjdfgsdfg\nsdfgkjsdfkljg\nsdfgsdg\ns
 
 new = copy_table(current)
 new["interface/ethernet/*1/ip"] = "192.168.95.4/24"
---new["interface/ethernet/*2/ip"] = "192.168.95.33"
-new["interface/ethernet/*0/mtu"] = nil
-current["interface/ethernet/bill"] = "nope"
+--new["interface/ethernet/*0/mtu"] = nil
+--current["interface/ethernet/bill"] = "nope"
+
+new["interface/pppoe/*0/user-id"] = "lee"
+new["interface/pppoe/*0/password"] = "hidden"
+new["interface/pppoe/*0/default-route"] = "auto"
+new["interface/pppoe/*0/mtu"] = 1492
+
 
 new["iptables/*filter/*FORWARD/policy"] = "ACCEPT"
 new["iptables/*filter/*FORWARD/rule/*10"] = "-s 12.3.4 -j ACCEPT"
@@ -101,8 +106,8 @@ CF_current = current
 
 
 
-rc, err = set(new, "interface/ethernet/0/mtu", "1234")
-if not rc then print("ERROR: " .. err) end
+--rc, err = set(new, "interface/ethernet/0/mtu", "1234")
+--if not rc then print("ERROR: " .. err) end
 rc, err = set(new, "iptables/filter/INPUT/rule/0030", "-a -b -c")
 if not rc then print("ERROR: " .. err) end
 
@@ -117,6 +122,9 @@ delete(new, "interface/ethernet/2")
 --delete(new, "dhcp")
 
 show(current, new)
+
+os.exit(0)
+
 --dump(new)
 ----local xx = import("sample")
 --
@@ -150,7 +158,7 @@ function execute_work_using_func(funcname, work_list)
 				local work_hash = values_to_keys(work_list[key])
 
 				local ok, rc, err = pcall(func, work_hash)
-				if not ok then return false, string.format("[%s]: %s code error: %s", key, funcname, err) end
+				if not ok then return false, string.format("[%s]: %s code error: %s", key, funcname, rc) end
 				if not rc then return false, string.format("[%s]: %s failed: %s", key, funcname, err) end
 
 			end
@@ -162,6 +170,11 @@ function execute_work_using_func(funcname, work_list)
 		if not activity then return false, "some kind of dependency loop" end
 	end
 	return true
+end
+
+function callme(a)
+	print("GOT YOU")
+	return false
 end
 
 --

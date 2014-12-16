@@ -17,7 +17,11 @@
 --  along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ------------------------------------------------------------------------------
 
-function iptables(changes)
+-- forward declare, so we can keep code order sensible
+local process_table
+
+
+local function iptables(changes)
     print("Hello From IPTABLES")
 
 	local tables = node_list("iptables/*", changes)
@@ -25,6 +29,7 @@ function iptables(changes)
 		print("TABLE: " .. table)
 		process_table(table, changes)
 	end
+	return true
 end
 
 --

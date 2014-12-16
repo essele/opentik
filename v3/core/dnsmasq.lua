@@ -22,9 +22,6 @@
 -- Search through kv for anything that matches the search, we replace
 -- % with a non-slash one or more
 --
--- TODO: we replace - with %%-, but we should probably escape several
---       other special search chars
---
 function matching_nodes(search, kv)
 	local rc = {}
 
@@ -77,12 +74,8 @@ end
 -- we will completely re-write the config any time there is a change
 -- and restart (or start or stop) the daemon as needed.
 --
-function dnsmasq_commit(changes)
+local function dnsmasq_commit(changes)
 	print("Hello From DNSMASQ")
-
-	-- temporary
-	local rc, err = dnsmasq_precommit(changes)
-	if not rc then print("DNSMASQ PRECOM ERR: " .. err) end
 
 	--
 	-- Check to see if we have a config at all!
@@ -131,8 +124,7 @@ end
 -- For dnsmasq this means checking any referenced interfaces and
 -- ipsets
 --
-function dnsmasq_precommit(changes)
-	
+local function dnsmasq_precommit(changes)
 	--
 	-- dns/forwarding has a 'listen-on' interface list
 	--
@@ -160,11 +152,11 @@ end
 
 
 VALIDATOR["text_label"] = function(v, kp)
-	return true
+	return OK
 end
 
 VALIDATOR["ipset"] = function(v, kp)
-	return true
+	return OK
 end
 
 --

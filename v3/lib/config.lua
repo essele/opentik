@@ -126,6 +126,7 @@ function build_work_list(current, new)
 				if rc[fkey] == nil then rc[fkey] = {} end
 				add_to_list(rc[fkey], remove_prefixed(sorted, origkey))
 			else
+				-- TODO: what do we do here??
 				print("No function found for " .. key)
 			end
 		else
@@ -408,8 +409,7 @@ function show(current, new, kp)
 				-- We must be a container
 				--
 				if mc["with_children"] then
-					parent = parent .. dispkey .. " "
-					int_show(newkp .. "/", combined, indent, parent)
+					int_show(newkp .. "/", combined, indent, parent .. dispkey .. " ")
 				else
 					local header, footer = container_header_and_footer(indent, parent, newkp)
 					io.write(header)
