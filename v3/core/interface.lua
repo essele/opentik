@@ -30,28 +30,6 @@
 --
 --
 
-
---
--- Take the list (hash) of changes and a keypath, look through the
--- changes and build lists of added, removed and changed elements
---
-function process_changes(changes, keypath)
-	local rc = { ["added"] = {}, ["removed"]= {}, ["changed"] = {} }
-
-	local items = node_list(keypath, changes)
-	for _,item in ipairs(items) do
-		
-		local in_old = next(node_list(keypath .. item, current))
-		local in_new = next(node_list(keypath .. item, new))
-
-		if in_old and in_new then table.insert(rc["changed"], item)
-		elseif in_old then table.insert(rc["removed"], item)
-		else table.insert(rc["added"], item) end
-	end
-	return rc
-end
-
-
 function callme(changes)
 	print("Hello From Interface")
 

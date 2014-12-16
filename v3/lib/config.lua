@@ -18,22 +18,9 @@
 ------------------------------------------------------------------------------
 
 --
--- Key/Value pair implementation using slashes
---
---
---
-
-package.path = "./lib/?.lua"
-package.cpath = "./lib/?.so"
-
--- different namespace packages
---local base64 = require("base64")
-
---
 -- Globals for the validation routines
 --
 VALIDATOR = {}
-
 FAIL=0
 OK=1
 PARTIAL=2
@@ -75,7 +62,6 @@ end
 -- mentioned within the provided kv table.
 --
 function node_list(wk, kv)
-	print("NodeList: ["..wk.."]")
 	local uniq = {}
 	local rc = {}
 
@@ -90,6 +76,12 @@ function node_list(wk, kv)
 	for k,_ in pairs(uniq) do table.insert(rc, k) end
 	table.sort(rc)
 	return rc
+end
+function node_exists(prefix, kv)
+	for k,_ in pairs(kv) do
+		if prefix_match(k, prefix, "/") then return true end
+	end
+	return false
 end
 
 --
@@ -119,7 +111,7 @@ end
 --
 --
 --
-function build_work_list()
+function build_work_list(current, new)
 	local rc = {}
 	local sorted = sorted_keys(new, current)
 
@@ -155,8 +147,8 @@ function process_changes(changes, keypath)
 	local items = node_list(keypath, changes)
 	for _,item in ipairs(items) do
 
-		local in_old = next(node_list(keypath .. item, current))
-		local in_new = next(node_list(keypath .. item, new))
+		local in_old = next(node_list(keypath .. item, CF_current))
+		local in_new = next(node_list(keypath .. item, CF_new))
 
 		if in_old and in_new then table.insert(rc["changed"], item)
 		elseif in_old then table.insert(rc["removed"], item)

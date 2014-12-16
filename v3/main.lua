@@ -41,6 +41,7 @@ new={}
 --
 dofile("core/interface.lua")
 dofile("core/iptables.lua")
+dofile("core/dnsmasq.lua")
 
 
 function other() 
@@ -50,17 +51,6 @@ end
 
 master["test"] = { ["function"] = other }
 master["test/lee"] = { ["type"] = "name" }
-
-
-master["dns"] = { ["function"] = other }
-
-master["dns/forwarder"] = {}
-master["dns/forwarder/server"] = { ["type"] = "OK", ["list"] = 1 }
-master["dns/file"] = { ["type"] = "file/text" }
-
-master["dhcp"] = {  ["delegate"] = "dns" }
-master["dhcp/flag"] = { ["type"] = "string" }
-
 
 
 
@@ -89,19 +79,38 @@ new["iptables/*filter/*FORWARD/rule/*10"] = "-s 12.3.4 -j ACCEPT"
 new["iptables/*filter/*FORWARD/rule/*20"] = "-d 2.3.4.5 -j DROP"
 --new["iptables2/*filter/*FORWARD/rule/*20"] = "-d 2.3.4.5 -j DROP"
 
-new["dns/forwarder/server"] = { "one", "three", "four" }
+new["dns/forwarding/server"] = { "one", "three", "four" }
+new["dns/forwarding/cache-size"] =150
+new["dns/forwarding/listen-on"] = { "eth0" }
+--new["dns/forwarding/options"] = { "no-resolv", "other-stuff" }
+
+new["dns/domain-match/*xbox/domain"] = { "XBOXLIVE.COM", "xboxlive.com", "live.com" }
+new["dns/domain-match/*xbox/group"] = "vpn-dst"
+new["dns/domain-match/*iplayer/domain"] = { "bbc.co.uk", "bbci.co.uk" }
+new["dns/domain-match/*iplayer/group"] = "vpn-dst"
+
 new["dhcp/flag"] = "hello"
+
+
+CF_new = new
+CF_current = current
+
 
 
 rc, err = set(new, "interface/ethernet/0/mtu", "1234")
 if not rc then print("ERROR: " .. err) end
 rc, err = set(new, "iptables/filter/INPUT/rule/0030", "-a -b -c")
 if not rc then print("ERROR: " .. err) end
-rc, err = set(new, "dns/forwarder/server", "a new one")
-if not rc then print("ERROR: " .. err) end
 
-delete(new, "iptables")
+rc, err = set(new, "iptables/nat/PREROUTING/rule/0010", "-a -b -c")
+rc, err = set(new, "iptables/mangle/PREROUTING/rule/0010", "-a -b -c")
+rc, err = set(new, "iptables/nat/POSTROUTING/rule/0020", "-a -b -c")
+
+
+--delete(new, "iptables")
 delete(new, "interface/ethernet/2")
+--delete(new, "dns")
+--delete(new, "dhcp")
 
 show(current, new)
 --dump(new)
@@ -112,7 +121,7 @@ show(current, new)
 ----
 ---- Build the work list
 ----
-work_list = build_work_list()
+work_list = build_work_list(current, new)
 
 --print("\n\n")
 --
@@ -135,7 +144,7 @@ for key, fields in pairs(work_list) do
 	local func = master[key]["function"]
 	local work_hash = values_to_keys(work_list[key])
 
-	local ok, rc, err = pcall(func, work_hash, current, new)
+	local ok, rc, err = pcall(func, work_hash)
 	print("ok="..tostring(ok).." rc="..tostring(rc).." err="..tostring(err))
 
 	work_list[key] = nil
