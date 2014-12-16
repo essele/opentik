@@ -30,6 +30,17 @@ function copy_table(t)
 end
 
 --
+-- Create a hash of all the values of a list
+--
+function values_to_keys(t)
+	local rc = {}
+	for _, k in ipairs(t) do
+		rc[k] = 1
+	end
+	return rc
+end
+
+--
 -- Return the uniq sorted valies from a table (or two)
 --
 function sorted_values(kv1, kv2)

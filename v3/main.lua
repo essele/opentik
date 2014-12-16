@@ -36,25 +36,23 @@ master={}
 current={}
 new={}
 
-
 --
 -- import all of the core modules
 --
 dofile("core/interface.lua")
+dofile("core/iptables.lua")
+
+
+function other() 
+	print("other: dummy function called")
+end
+
 
 master["test"] = { ["function"] = other }
 master["test/lee"] = { ["type"] = "name" }
 
-master["iptables"] = { ["function"] = iptables }
-master["iptables/*"] = { ["style"] = "iptables_table" }
-master["iptables/*/*"] = { ["style"] = "iptables_chain" }
-master["iptables/*/*/policy"] = { ["type"] = "iptables_policy" }
-master["iptables/*/*/rule"] = {     ["with_children"] = 1 }
-master["iptables/*/*/rule/*"] = {   ["style"] = "OK",
-                                    ["type"] = "iptables_rule",
-                                    ["quoted"] = 1 }
 
-master["dns"] = { ["function"] = "xxx" }
+master["dns"] = { ["function"] = other }
 
 master["dns/forwarder"] = {}
 master["dns/forwarder/server"] = { ["type"] = "OK", ["list"] = 1 }
@@ -68,7 +66,10 @@ master["dhcp/flag"] = { ["type"] = "string" }
 
 current["interface/ethernet/*0/ip"] = "192.168.95.1/24"
 current["interface/ethernet/*1/ip"] = "192.168.95.2/24"
+current["interface/ethernet/*2/ip"] = "192.168.95.33"
+current["interface/ethernet/*2/mtu"] = 1500
 current["interface/ethernet/*0/mtu"] = 1500
+current["interface/ethernet/fred"] = "yep"
 
 current["dns/forwarder/server"] = { "one", "two", "three" }
 current["dns/file"] = "afgljksdhfglkjsdhf glsjdfgsdfg\nsdfgkjsdfkljg\nsdfgsdg\nsdfgsdfg\n"
@@ -79,8 +80,9 @@ current["dns/file"] = "afgljksdhfglkjsdhf glsjdfgsdfg\nsdfgkjsdfkljg\nsdfgsdg\ns
 
 new = copy_table(current)
 new["interface/ethernet/*1/ip"] = "192.168.95.4/24"
-new["interface/ethernet/*2/ip"] = "192.168.95.33"
+--new["interface/ethernet/*2/ip"] = "192.168.95.33"
 new["interface/ethernet/*0/mtu"] = nil
+current["interface/ethernet/bill"] = "nope"
 
 new["iptables/*filter/*FORWARD/policy"] = "ACCEPT"
 new["iptables/*filter/*FORWARD/rule/*10"] = "-s 12.3.4 -j ACCEPT"
@@ -99,6 +101,7 @@ rc, err = set(new, "dns/forwarder/server", "a new one")
 if not rc then print("ERROR: " .. err) end
 
 delete(new, "iptables")
+delete(new, "interface/ethernet/2")
 
 show(current, new)
 --dump(new)
@@ -128,7 +131,13 @@ for key, fields in pairs(work_list) do
 			goto continue
 		end
 	end
-	print("DOING WOEK\n")
+	print("DOING WORK for ["..key.."]\n")
+	local func = master[key]["function"]
+	local work_hash = values_to_keys(work_list[key])
+
+	local ok, rc, err = pcall(func, work_hash, current, new)
+	print("ok="..tostring(ok).." rc="..tostring(rc).." err="..tostring(err))
+
 	work_list[key] = nil
 ::continue::
 end

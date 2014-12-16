@@ -38,26 +38,15 @@ FAIL=0
 OK=1
 PARTIAL=2
 
-
-function other()
-	print("Other Hello")
-end
-
-function iptables()
-	print("IPTAB")
-end
-
 --
 -- Remove all elements that start with the prefix and return them in a list
 --
 function remove_prefixed(list, prefix)
-	local plen = prefix:len()
 	local rc = {}
 
 	local i = 1
 	while(i <= #list) do
 		if prefix_match(list[i], prefix, "/") then
---		if list[i]:sub(1, plen) == prefix then
 			table.insert(rc, list[i])
 			table.remove(list, i)
 		else
@@ -86,6 +75,7 @@ end
 -- mentioned within the provided kv table.
 --
 function node_list(wk, kv)
+	print("NodeList: ["..wk.."]")
 	local uniq = {}
 	local rc = {}
 
@@ -154,43 +144,25 @@ function build_work_list()
 end
 
 --
--- To action the new config we run through the master and find any nodes that have
--- a function.
+-- Given a list of changes, pull out nodes at the keypath level
+-- and work out if they are added, removed or changed.
 --
--- If we find a function we can then look for all children and see if we have any changes
--- between current and new.
+-- NOTE: uses the global config variables
 --
--- If there are changes then we can call the function
---
---
---
+function process_changes(changes, keypath)
+	local rc = { ["added"] = {}, ["removed"]= {}, ["changed"] = {} }
 
+	local items = node_list(keypath, changes)
+	for _,item in ipairs(items) do
 
-VALIDATOR["iptables_table"] = function(v, kp)
-	local valid = { ["filter"] = 1, ["mangle"] = 1, ["nat"] = 1, ["raw"] = 1 }
+		local in_old = next(node_list(keypath .. item, current))
+		local in_new = next(node_list(keypath .. item, new))
 
-	if valid[v] then return OK end
-	--
-	-- Now check for partial...
-	--
-	for k,_ in pairs(valid) do
-		if k:sub(1, #v) == v then return PARTIAL, "invalid table name" end
+		if in_old and in_new then table.insert(rc["changed"], item)
+		elseif in_old then table.insert(rc["removed"], item)
+		else table.insert(rc["added"], item) end
 	end
-	return FAIL, "invalid table name"
-end
-
-VALIDATOR["iptables_chain"] = function(v, kp)
-	print("Validating chain ("..v..") for keypath ("..kp..")")
-	return OK
-end
-
-VALIDATOR["iptables_rule"] = function(v, kp)
-	print("Validating rule ("..v..") for keypath ("..kp..")")
-	return OK
-end
-
-VALIDATOR["OK"] = function(v)
-	return OK
+	return rc
 end
 
 
@@ -249,7 +221,7 @@ end
 --
 function import(filename)
 	local rc = {}
-    local line, file
+	local line, file
 
 	function decode(data, ftype)
 		if ftype == "file/binary" then

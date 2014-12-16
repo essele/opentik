@@ -17,33 +17,50 @@
 --  along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ------------------------------------------------------------------------------
 
-function callme()
-	print("Hello")
-end
+--
+--	for any deleted
+--		- unconfigure
+--
+--	for any changed
+--		- reconfigure
+--
+--	for any new
+--		- configure
+--
+--
+--
+
 
 --
--- Main interface config definition
+-- Take the list (hash) of changes and a keypath, look through the
+-- changes and build lists of added, removed and changed elements
 --
-master["interface"] = {}
-master["interface/ethernet"] = 				{ ["function"] = callme,
-								 			  ["depends"] = { "iptables" }, 
-											  ["with_children"] = 1 }
+function process_changes(changes, keypath)
+	local rc = { ["added"] = {}, ["removed"]= {}, ["changed"] = {} }
 
-master["interface/ethernet/*"] = 			{ ["style"] = "ethernet_if" }
-master["interface/ethernet/*/ip"] = 		{ ["type"] = "ipv4" }
-master["interface/ethernet/*/mtu"] = 		{ ["type"] = "mtu" }
+	local items = node_list(keypath, changes)
+	for _,item in ipairs(items) do
+		
+		local in_old = next(node_list(keypath .. item, current))
+		local in_new = next(node_list(keypath .. item, new))
 
-
-
-
-function other()
-	print("Other Hello")
+		if in_old and in_new then table.insert(rc["changed"], item)
+		elseif in_old then table.insert(rc["removed"], item)
+		else table.insert(rc["added"], item) end
+	end
+	return rc
 end
 
-function iptables()
-	print("IPTAB")
-end
 
+function callme(changes)
+	print("Hello From Interface")
+
+	local state = process_changes(changes, "interface/ethernet/")
+
+	for _,v in ipairs(state.added) do print("Added: "..v) end
+	for _,v in ipairs(state.removed) do print("Removed: "..v) end
+	for _,v in ipairs(state.changed) do print("Changed: "..v) end
+end
 
 
 --
@@ -78,5 +95,19 @@ VALIDATOR["mtu"] = function(v)
 	return OK
 end
 
+
+--
+-- Main interface config definition
+--
+master["interface"] = {}
+master["interface/ethernet"] = 				{ ["function"] = callme,
+								 			  ["depends"] = { "iptables" }, 
+											  ["with_children"] = 1 }
+
+master["interface/ethernet/*"] = 			{ ["style"] = "ethernet_if" }
+master["interface/ethernet/*/ip"] = 		{ ["type"] = "ipv4" }
+master["interface/ethernet/*/mtu"] = 		{ ["type"] = "mtu" }
+master["interface/ethernet/fred"] = { ["type"] = "ipv4" }
+master["interface/ethernet/bill"] = { ["type"] = "ipv4" }
 
 
