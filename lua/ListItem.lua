@@ -37,10 +37,11 @@ List = {}			-- List functions
 -- configuration. Here we subscribe to the command channel for the
 -- given list
 --
-function List.create(name, key)
+function List.create(name, key, object)
 	LIST[name] = {}
 	LCFG[name] = {}
 	LCFG[name].key = key
+	LCFG[name].object = object
 end
 
 --
@@ -56,6 +57,42 @@ function remove_from_list(list, item)
 	if(pos) then table.remove(list, pos) return 1 end
 	return 0
 end
+
+--
+-- We need to be able to load and save the config from the
+-- config files
+--
+function List.save(listname)
+	local data
+	local fh = io.open("conf/"..listname..".conf", "w")
+	
+	if(not fh) then error("unable to write config") end
+
+	for i,v in ipairs(LIST[listname]) do
+		-- TODO: handle enabled/disabled
+		data = unit.serialize(v.config)
+		fh:write(data, "\n")
+	end
+	fh:close()
+end
+function List.load(listname)
+	local item
+	local config
+
+	local fh = io.open("conf/"..listname..".conf", "r")
+	
+	if(not fh) then error("unable to read config") end
+	
+	for data in fh:lines() do
+		config = unit.unserialize(data)
+		print("Data is: "..data);
+		print("config is: "..tostring(config))
+		print("type is: "..tostring(config.type))
+		item = LCFG[listname].object.from_config(config)
+		item:apply()
+	end	
+end
+
 
 --
 -- Dependency callback ... when any of our dependencies change
@@ -104,13 +141,20 @@ function List.remove_dependency(topic, item)
 end
 
 --
--- Find a ListItem in a list given a field and value to find
+-- Find a ListItem in a list given a field and value to find (and also a 2 field version)
 --
 -- NOTE: we only search valid items and non-disabled
 --
 function List.findItem(listname, fieldname, value)
 	for k,v in ipairs(LIST[listname]) do
 		if(v.valid and v.enabled and v.config[fieldname] == value) then return v end
+	end
+	return nil
+end
+function List.findItem2(listname, fieldname1, value1, fieldname2, value2)
+	for k,v in ipairs(LIST[listname]) do
+		if(v.valid and v.enabled and 
+			v.config[fieldname1] == value1 and v.config[fieldname2] == value2) then return v end
 	end
 	return nil
 end
@@ -168,6 +212,8 @@ end
 --
 -- Once we create an item we should populate the default fields into the
 -- config (only if the fields are required)
+--
+-- TODO: config or scratch?
 --
 function ListItem:defaults()
 	local fname,f
@@ -357,9 +403,9 @@ function ListItem:apply()
 	return valid
 end
 function ListItem:enable()
-	self.enabled = true
-	if(self.valid and self.build_depends) then
-		self:build_depends()
+	if(not self.enabled and self.valid) then
+		self.enabled = true
+		if(self.build_depends) then self:build_depends() end
 		self:set_state()
 	end
 end

@@ -1,0 +1,18 @@
+interface/ethernet/*0/ip: 192.168.95.1/24
+interface/ethernet/*1/ip: 192.168.95.4/24
+iptables/*filter/*FORWARD/rule/*20: -d 2.3.4.5 -j DROP
+dns/forwarder/server: <list>
+	|one
+	|three
+	|four
+	<end>
+dns/file: <file/text>
+	|afgljksdhfglkjsdhf glsjdfgsdfg
+	|sdfgkjsdfkljg
+	|sdfgsdg
+	|sdfgsdfg
+	|
+	<end>
+iptables/*filter/*FORWARD/rule/*10: -s 12.3.4 -j ACCEPT
+interface/ethernet/*2/ip: 192.168.95.33
+iptables/*filter/*FORWARD/policy: ACCEPT

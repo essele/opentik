@@ -37,9 +37,14 @@ function Address:new()
 
 	return address
 end
+function Address.from_config(config)
+	local address = Address:new()
+	address.scratch = config
+	return address
+end
 
 --
--- For addresses we are only dependent on the interface being
+-- For addresses we are dependent on the interface being
 -- up. So when we build our dependencies we make sure we remove
 -- the old one (if the interface changed) and then set the
 -- dependency.
@@ -92,6 +97,12 @@ address:set("interface", "grelee")
 rc = address:apply()
 
 
+function CB.address.address_new(ip, iface, object)
+	print("NWE ADDRESS: " .. ip)
+end
+
+
 print("Apply returned " .. tostring(rc))
 
+netlink.watch("addr", CB.address.address_new)
 

@@ -1,0 +1,257 @@
+#!./luajit
+-- 
+-- Simple version
+-- 
+-- 
+-- any item can either be a container or a field, either way they are tables
+-- 
+-- 
+-- a container has sub items
+-- 
+-- a field has a value
+-- 
+-- 
+-- anything deleted (field or container) is moved to -name 
+-- 
+-- added items are +name
+-- changed items are removed and added?
+-- 
+-- cleaning removes all
+-- 
+-- 
+-- 
+-- 
+-- 
+
+CONFIG = {}
+CONFIG.master = {
+	["dnsmasq"] = {
+		["dns"] = {
+			["resolvers"] = {
+				_type = "list/ipv4"
+			},
+			["enable"] = {
+				_type = "boolean"
+			}
+		}
+	},
+	["test"] = {
+		["fred"] = {
+			_type = "string"
+		},
+		["*"] = {
+			["a"] = { _type = "xx" },
+			["b"] = { _type = "xx" },
+			["c"] = { _type = "xx" }
+		}
+	}
+}
+
+
+--
+-- delta contains new or changed items
+-- old contains original (or deleted) items
+-- active contains the currently live set
+--
+
+CONFIG.old = { }
+			
+CONFIG.active = {
+	["dnsmasq"] = {
+		["dns"] = {
+			["resolvers"] = {
+				 ["1"] = { value = "1.2.3.4" },
+				 ["2"] = { value = "2.2.3.4" },
+				 ["3"] = { value = "3.2.3.4" },
+			}
+		}
+	},
+	["test"] = {
+		["fred"] = {
+			value = 50
+		}
+	}
+}
+
+function copy_table(t)
+	local rc = {}
+	for k, v in pairs(t) do
+		if(type(v) == "table") then rc[k] = copy_table(v) 
+		else rc[k] = v end
+	end
+	return rc
+end
+
+function make_path(config, path)
+	for key in string.gmatch(path, "([^/]+)") do
+		if(not config[key]) then config[key] = {} end
+		config = config[key]
+	end
+	return config
+end
+
+function get_node(config, path)
+	for key in string.gmatch(path, "([^/]+)") do
+		local cc = config[key] or config["*"]
+		if(not cc or type(cc) ~= "table") then return nil end
+		config = cc
+	end
+	return config
+end
+
+function dump(t, i)
+	i = i or 0
+	for k, v in pairs(t) do
+		print(string.rep(" ", i)..k.."="..tostring(v))
+		if(type(v) == "table") then
+			dump(v, i+4)
+		end
+	end
+end
+
+function cleanse_empties(t, path)
+	while(#path > 0) do
+		path = string.gsub(path, "/[^/]+$", "")
+		local conf = get_node(t, path)
+		
+		for k,v in pairs(conf) do
+			if(not next(v)) then conf[k] = nil end
+		end
+	end
+end
+
+function update_parents(dc, path)
+	while(#path > 0) do
+		path = string.gsub(path, "/[^/]+$", "")
+		local conf = get_node(dc, path)
+		local deleted = 0
+		local added = 0
+		local changed = 0
+		local static = 0
+		
+		for k,v in pairs(conf) do
+			if(v._added) then added = added + 1
+			elseif(v._deleted) then deleted = deleted + 1
+			elseif(v._changed) then changed = changed + 1
+			else static = static + 1 end
+		end
+	
+		conf._added = nil conf._deleted = nil conf._changed = nil	
+		if(added > 0 and (deleted + changed + static == 0)) then conf._added = 1
+		elseif(deleted > 0 and (added + changed + static == 0)) then conf._deleted = 1
+		elseif(added + deleted + changed > 0) then conf._changed = 1 end
+	end
+end
+
+--
+-- removing an item means recursivly marking it as deleted
+-- by creating a _deleted marker. We then need to make the
+-- parent nodes as _changed.
+--
+function delete_config(path)
+	-- work out the parent and get it from delta
+	local parent, node = string.match(path, "^(.*)/([^/]+)$")
+	local dc = get_node(CONFIG.delta, parent)
+	
+	if(not dc or not dc[node]) then
+		print("trying to delete invalid node")
+		return
+	end
+	delete_config_r(dc[node])
+	update_parents(CONFIG.delta, path)
+end
+function delete_config_r(dc)
+	for k, v in pairs(dc) do
+		if(type(v) == "table") then delete_config_r(v) end
+	end
+	dc._deleted = 1
+end
+
+--
+-- set a config item by providing a base "value" node to operate on
+-- and a value
+--
+-- (TODO: lists we might want to do differently!)
+--
+function set_config(path, value)
+	-- first get the master value
+	local mc = get_node(CONFIG.master, path)
+	if(not mc or not mc._type) then
+		print("invalid path: " .. path)
+		return
+	end
+
+	-- see if we are already deleted? if not we
+	-- need to
+	local dc = get_node(CONFIG.delta, path)
+	if(dc LAH)
+
+	-- now we can set the new value
+	local dc = make_path(CONFIG.delta, path)
+	dc.value = value
+end
+
+function show_config(dc, oc, ac, mc)
+	local dc = dc or CONFIG.delta
+	local oc = oc or CONFIG.old
+	local ac = ac or CONFIG.active
+	local mc = mc or CONFIG.master
+
+	local all_keys = {}
+	local sorted = {}
+	-- TODO: sort properly
+	for k, _ in pairs(dc) do all_keys[k] = 1 end
+	for k, _ in pairs(oc) do all_keys[k] = 1 end
+	for k, _ in pairs(ac) do all_keys[k] = 1 end
+	for k, _ in pairs(all_keys) do table.insert(sorted, k) end
+	table.sort(sorted)
+
+	for _, k in ipairs(sorted) do
+		local operation
+		local value
+
+		-- if we don't have any reference then we skip
+		local mk = mc[k] or mc["*"]
+		if(not mk) then
+			print("mv=nil for k="..k)
+			return
+		end
+
+		-- it must exist somewhere, otherwise don't do anything
+		if(not dc[k] and not oc[k] and not ac[k]) then goto continue end
+
+		-- so now we can work out an operation...
+		-- if we are in delta but not active, then we must be added
+		-- if we are in delta and old then it's a modify
+		-- if we are in old then it's a delete
+		if(dc[k] and not ac[k]) then operation = "+" value = dc[k]
+		elseif(dc[k] and oc[k]) then operation = "|" value = dc[k]
+		elseif(oc[k]) then operation = "-" value = oc[k]
+		else operation = " " value = ac[k] end
+
+		-- now we can display
+		if(mk._type) then
+			print(operation .. " " .. k .. " " .. tostring(value.value))
+		else 
+			print(operation .. " " .. k .. " {")
+			show_config(dc[k] or {}, oc[k] or {}, ac[k] or {}, mk)
+			print(operation .. " }")
+		end
+::continue::
+	end
+end
+
+
+CONFIG.delta = copy_table(CONFIG.active)
+delete_config("/dnsmasq/dns")
+--set_config("/dnsmasq/dns/enable", "blah")
+--set_config("/test/1/a", "x")
+--set_config("/test/1/b", "y")
+print("-- DELTA --")
+dump(CONFIG.delta)
+print("-- SHOWING --")
+--show_config()
+
+
+
+

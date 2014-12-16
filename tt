@@ -63,14 +63,48 @@ print("REG: " .. tostring(__unit_register))
 
 --netlink.tunnel_create("tunlee", "gre", "10.4.5.6", "10.6.7.8");
 
-netlink.if_set("tunlee", "up")
-netlink.if_set("tunlee", "mtu", 1376)
-netlink.if_set("tunlee", "down")
-netlink.if_set("tunlee", "name", "XXtong")
-netlink.if_set("XXtong", "up")
+--netlink.if_set("tunlee", "up")
+--netlink.if_set("tunlee", "mtu", 1376)
+--netlink.if_set("tunlee", "down")
+--netlink.if_set("tunlee", "name", "XXtong")
+--netlink.if_set("XXtong", "up")
 
---while(1) do
---	unit.service_loop()
---end
+--netlink.tunnel_delete("grelee")
+
+--netlink.addr_add("10.4.4.4", "grelee")
+--netlink.addr_add("10.7.0.1/24", "grelee")
+--netlink.addr_remove("10.7.0.1/24", "grelee")
+
+function cb_add(iface, type, item, action)
+	print("CBADD:  iface="..iface.." type="..type.." action="..action)
+	for k,v in pairs(item) do
+		print("  k="..k.." v="..tostring(v))
+	end
+end
+function cb_mod(ip, iface, action)
+	print("CBMOD: ip="..ip.." iface="..iface.." action="..action)
+end
+function cb_del(ip, iface, action)
+	print("CBDEL: ip="..ip.." iface="..iface.." action="..action)
+end
 
 
+--netlink.watch("link", cb_add, cb_mod, cb_del)
+--
+
+x = { x=1, b=23, c={ xx="hello", yy="bhfh"}}
+
+
+data = unit.serialize(x)
+
+print(data)
+
+y = unit.unserialize(data)
+
+print("SH: "..y.c.xx)
+
+--[[
+while(1) do
+	unit.service_loop()
+end
+]]--

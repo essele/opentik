@@ -8,6 +8,7 @@
 #include <lualib.h>
 #include "luafuncs.h"
 #include "unit.h"
+#include "serialize.h"
 
 /*==============================================================================
  *
@@ -102,6 +103,25 @@ int service_loop(lua_State *L) {
 	lua_pushnumber(L, rc);
 	return 1;
 } 
+/*==============================================================================
+ * These are wrapper functions around our serialization functions to allow
+ * direct Lua access
+ *==============================================================================
+ */
+static int do_serialize(lua_State *L) {
+	int		len;
+	char	*rc = serialize(L, 1, &len);
+	
+	lua_pushlstring(L, rc, len);
+	free(rc);
+	return 1;
+}
+static int do_unserialize(lua_State *L) {
+	char	*data = (char *)luaL_checkstring(L, 1);
+	
+	unserialize(L, data);
+	return 1;
+}
 
 /*==============================================================================
  * These are the functions we export to Lua...
@@ -109,6 +129,8 @@ int service_loop(lua_State *L) {
  */
 static const struct luaL_reg lib[] = {
 	{"service_loop", service_loop},
+	{"serialize", do_serialize},
+	{"unserialize", do_unserialize},
 	{NULL, NULL}
 };
 

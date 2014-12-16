@@ -38,7 +38,7 @@ LDFLAGS_netlink.so		= -lnl-3 -lnl-route-3
 #
 # Which objects to each of the libs need...
 #
-unit.so:			unit.o
+unit.so:			unit.o serialize.o
 mosquitto.so:		mosquitto.o serialize.o
 netlink.so:			netlink.o
 filewatch.so:		filewatch.o

@@ -59,7 +59,7 @@ for _,u in ipairs(units) do
 end
 
 
-
+--[[
 interface = Interface:new("gre")
 --interface:set("mtu", 1492)
 interface:set("local", "10.2.0.1")
@@ -76,6 +76,11 @@ interface:set("name", "ether1")
 interface.scratch.origif = "eth0"
 rc = interface:apply()
 
+
+List.save("interface")
+]]--
+
+List.load("interface")
 
 print("Apply returned " .. tostring(rc))
 for k,v in pairs(interface.config) do

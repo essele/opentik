@@ -1,10 +1,5 @@
 #!../luajit
 
---
--- Create the main interface list and set the name field
--- as the key field
---
-List.create("interface", "name")
 
 
 -- TODO: remove
@@ -72,6 +67,11 @@ function Interface:new(type)
 	-- Setup the internal fieds...
 	interface.config.type = type
 
+	return interface
+end
+function Interface.from_config(config)
+	local interface = Interface:new(config.type)
+	interface.scratch = config
 	return interface
 end
 
@@ -190,6 +190,14 @@ end
 function cb_interface_del(index, name, type)
 	print("GOT INTERFACE DEL: "..name)
 end
+
+--
+-- Create the main interface list and set the name field
+-- as the key field. We also supply the object type so we
+-- can do a config load
+--
+List.create("interface", "name", Interface)
+
 
 --
 -- Load the unit support library
