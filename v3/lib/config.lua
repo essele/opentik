@@ -96,7 +96,7 @@ function find_master_function(wk)
 		print("Looking at ["..wk.."]")
 		wk = wk:gsub("/?[^/]+$", "")
 
-		if master[wk] and master[wk]["function"] then
+		if master[wk] and master[wk]["commit"] then
 			return wk, wk
 		end
 		if master[wk] and master[wk]["delegate"] then

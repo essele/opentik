@@ -49,7 +49,7 @@ function other()
 end
 
 
-master["test"] = { ["function"] = other }
+master["test"] = { ["commit"] = other }
 master["test/lee"] = { ["type"] = "name" }
 
 
@@ -78,10 +78,14 @@ new["iptables/*filter/*FORWARD/policy"] = "ACCEPT"
 new["iptables/*filter/*FORWARD/rule/*10"] = "-s 12.3.4 -j ACCEPT"
 new["iptables/*filter/*FORWARD/rule/*20"] = "-d 2.3.4.5 -j DROP"
 --new["iptables2/*filter/*FORWARD/rule/*20"] = "-d 2.3.4.5 -j DROP"
+--
+
+new["iptables/set/*vpn-dst/type"] = "hash:ip"
+new["iptables/set/*vpn-dst/item"] = { "1.2.3.4", "2.2.2.2", "8.8.8.8" }
 
 new["dns/forwarding/server"] = { "one", "three", "four" }
 new["dns/forwarding/cache-size"] =150
-new["dns/forwarding/listen-on"] = { "eth0" }
+--new["dns/forwarding/listen-on"] = { "eth0" }
 --new["dns/forwarding/options"] = { "no-resolv", "other-stuff" }
 
 new["dns/domain-match/*xbox/domain"] = { "XBOXLIVE.COM", "xboxlive.com", "live.com" }
@@ -118,37 +122,62 @@ show(current, new)
 --
 ----show(xx, xx)
 --
-----
----- Build the work list
-----
-work_list = build_work_list(current, new)
 
 --print("\n\n")
 --
 -- Now run through and check the dependencies
 --
-for key, fields in pairs(work_list) do
-	print("Work: " .. key)
-	for i,v in ipairs(fields) do
-		print("\t" .. v)
-	end
-	local depends = master[key]["depends"] or {}
-	for _,d in ipairs(depends) do
-		print("\tDEPEND: " .. d)
-		if work_list[d] then
-			print("\tSKIP THIS ONE DUE TO DEPENDS")
-			goto continue
+function execute_work_using_func(funcname, work_list)
+	while next(work_list) do
+		local activity = false
+
+		for key, fields in pairs(work_list) do
+			print("Work: " .. key)
+			for i,v in ipairs(fields) do
+				print("\t" .. v)
+			end
+			local depends = master[key]["depends"] or {}
+			for _,d in ipairs(depends) do
+				print("\tDEPEND: " .. d)
+				if work_list[d] then
+					print("\tSKIP THIS ONE DUE TO DEPENDS")
+					goto continue
+				end
+			end
+			print("DOING " .. funcname .. " WORK for ["..key.."]\n")
+			local func = master[key][funcname]
+			if func then
+				local work_hash = values_to_keys(work_list[key])
+
+				local ok, rc, err = pcall(func, work_hash)
+				if not ok then return false, string.format("[%s]: %s code error: %s", key, funcname, err) end
+				if not rc then return false, string.format("[%s]: %s failed: %s", key, funcname, err) end
+
+			end
+			work_list[key] = nil
+			activity = true
+		::continue::
 		end
+
+		if not activity then return false, "some kind of dependency loop" end
 	end
-	print("DOING WORK for ["..key.."]\n")
-	local func = master[key]["function"]
-	local work_hash = values_to_keys(work_list[key])
-
-	local ok, rc, err = pcall(func, work_hash)
-	print("ok="..tostring(ok).." rc="..tostring(rc).." err="..tostring(err))
-
-	work_list[key] = nil
-::continue::
+	return true
 end
 
+--
+-- Build the work list
+--
+work_list = build_work_list(current, new)
 
+--
+-- Copy worklist and run precommit
+--
+pre_work_list = copy_table(work_list)
+local rc, err = execute_work_using_func("precommit", pre_work_list)
+if not rc then print(err) os.exit(1) end
+
+--
+-- Now the main event
+--
+local rc, err = execute_work_using_func("commit", work_list)
+if not rc then print(err) os.exit(1) end

@@ -19,6 +19,29 @@
 
 
 --
+-- Search through kv for anything that matches the search, we replace
+-- % with a non-slash one or more
+--
+-- TODO: we replace - with %%-, but we should probably escape several
+--       other special search chars
+--
+function matching_nodes(search, kv)
+	local rc = {}
+
+	-- first flag any chars we want to escape
+	search = search:gsub("([%-%+%.])", "=%1")
+	-- now do the % replacement
+	search = search:gsub("%%", "[^/]+")
+	-- now put back the escaped ones
+	search = search:gsub("=(.)", "%%%1")
+
+	for k,_ in pairs(kv) do
+		if k:match(search) then table.insert(rc, k) end
+	end
+	return rc
+end
+
+--
 -- Take a prefix and build a hash of elements and values (using the
 -- defaults it provided in the master config)
 --
@@ -37,6 +60,10 @@ function config_vars(prefix, kv)
 	return rc
 end
 
+--
+-- Output build a string that's a format output once for each
+-- value of a list
+--
 function sprintf_list(format, list)
 	local rc = ""
 	for _,v in ipairs(list) do
@@ -50,7 +77,7 @@ end
 -- we will completely re-write the config any time there is a change
 -- and restart (or start or stop) the daemon as needed.
 --
-function dnsmasq(changes)
+function dnsmasq_commit(changes)
 	print("Hello From DNSMASQ")
 
 	-- temporary
@@ -92,6 +119,7 @@ function dnsmasq(changes)
 		end
 		io.write("\n")
 	end
+	return true
 end
 
 --
@@ -111,7 +139,19 @@ function dnsmasq_precommit(changes)
 	if CF_new["dns/forwarding/listen-on"] then
 		for _,interface in ipairs(CF_new["dns/forwarding/listen-on"]) do
 			if not node_exists("interface/ethernet/"..interface, CF_new) then
-				return false, "dns/forwarding/listen-on interface not valid"
+				return false, string.format("dns/forwarding/listen-on interface not valid: %s", interface)
+			end
+		end
+	end
+	--
+	-- dns/domain-match has an ipset reference
+	--
+	if node_exists("dns/domain-match", CF_new) then
+		print("DOMAINMATCH")
+		for _,node in ipairs(matching_nodes("dns/domain-match/%/group", CF_new)) do
+			local set = CF_new[node]
+			if not node_exists("iptables/set/*"..set, CF_new) then
+				return false, string.format("%s ipset not valid: %s", node, set)
 			end
 		end
 	end
@@ -130,7 +170,8 @@ end
 --
 -- Main interface config definition
 --
-master["dns"] = { ["function"] = dnsmasq }
+master["dns"] = { ["commit"] = dnsmasq_commit,
+				  ["precommit"] = dnsmasq_precommit }
 
 master["dns/forwarding"] = {}
 master["dns/forwarding/cache-size"] = { ["type"] = "OK", ["default"] = 200 }

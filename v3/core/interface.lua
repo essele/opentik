@@ -78,7 +78,7 @@ end
 -- Main interface config definition
 --
 master["interface"] = {}
-master["interface/ethernet"] = 				{ ["function"] = callme,
+master["interface/ethernet"] = 				{ ["commit"] = callme,
 								 			  ["depends"] = { "iptables" }, 
 											  ["with_children"] = 1 }
 

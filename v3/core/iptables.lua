@@ -72,7 +72,7 @@ end
 --
 -- Master Structure for iptables
 --
-master["iptables"] = { ["function"] = iptables }
+master["iptables"] = { ["commit"] = iptables }
 master["iptables/*"] = { ["style"] = "iptables_table" }
 master["iptables/*/*"] = { ["style"] = "iptables_chain" }
 master["iptables/*/*/policy"] = { ["type"] = "iptables_policy" }
@@ -80,5 +80,12 @@ master["iptables/*/*/rule"] = {     ["with_children"] = 1 }
 master["iptables/*/*/rule/*"] = {   ["style"] = "OK",
                                     ["type"] = "iptables_rule",
                                     ["quoted"] = 1 }
+
+master["iptables/set"] = {}
+master["iptables/set/*"] = { 		["style"] = "iptables_set" }
+master["iptables/set/*/type"] = { 	["type"] = "iptables_set_type", 
+									["default"] = "hash:ip" }
+master["iptables/set/*/item"] = {	["type"] = "hostname_or_ip",
+									["list"] = 1 }
 
 
