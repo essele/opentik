@@ -27,16 +27,17 @@ package.path = "./lib/?.lua"
 package.cpath = "./lib/?.so"
 
 -- different namespace packages
-local base64 = require("base64")
+--local base64 = require("base64")
 
+--
+-- Globals for the validation routines
+--
+VALIDATOR = {}
 
-local master={}
-local current={}
-local new={}
+FAIL=0
+OK=1
+PARTIAL=2
 
-function callme()
-	print("Hello")
-end
 
 function other()
 	print("Other Hello")
@@ -165,73 +166,6 @@ end
 --
 
 
-
-
-master["interface"] = {}
-master["interface/ethernet"] = { ["function"] = callme,
-								 ["depends"] = { "iptables" },
-								 ["with_children"] = 1 }
-master["interface/ethernet/*"] = { ["style"] = "ethernet_if" }
-master["interface/ethernet/*/ip"] = { ["type"] = "ipv4" }
-master["interface/ethernet/*/mtu"] = { ["type"] = "mtu" }
-
-master["test"] = { ["function"] = other }
-master["test/lee"] = { ["type"] = "name" }
-
-master["iptables"] = { ["function"] = iptables }
-master["iptables/*"] = { ["style"] = "iptables_table" }
-master["iptables/*/*"] = { ["style"] = "iptables_chain" }
-master["iptables/*/*/policy"] = { ["type"] = "iptables_policy" }
-master["iptables/*/*/rule"] = { 	["with_children"] = 1 }
-master["iptables/*/*/rule/*"] = { 	["style"] = "OK", 
-									["type"] = "iptables_rule",
-									["quoted"] = 1 }
-
-master["dns"] = { ["function"] = "xxx" }
-
-master["dns/forwarder"] = {}
-master["dns/forwarder/server"] = { ["type"] = "OK", ["list"] = 1 }
-master["dns/file"] = { ["type"] = "file/text" }
-
-master["dhcp"] = { 	["delegate"] = "dns" }
-master["dhcp/flag"] = { ["type"] = "string" }
-
-VALIDATOR = {}
-
-FAIL=0
-OK=1
-PARTIAL=2
-
-
---
--- For ethernet interfaces we expect a simple number, but it needs
--- to map to a real interface (or be a virtual)
---
-VALIDATOR["ethernet_if"] = function(v)
-	--
-	-- TODO: once we know the numbers are ok, we need to test for a real
-	--       interface.
-	--
-	local err = "interface numbers should be [nnn] or [nnn:nnn] only"
-	if v:match("^%d+$") then return OK end
-	if v:match("^%d+:$") then return PARTIAL, err end
-	if v:match("^%d+:%d+$") then return OK end
-	return FAIL, err
-end
-
-VALIDATOR["mtu"] = function(v)
-	--
-	-- TODO: check the proper range of MTU numbers, may need to support
-	--       jumbo frames
-	--
-	if not v:match("^%d+$") then return FAIL, "mtu must be numeric only" end
-	local mtu = tonumber(v)
-
-	if mtu < 100 then return PARTIAL, "mtu must be above 100" end
-	if mtu > 1500 then return FAIL, "mtu must be 1500 or less" end
-	return OK
-end
-
 VALIDATOR["iptables_table"] = function(v, kp)
 	local valid = { ["filter"] = 1, ["mangle"] = 1, ["nat"] = 1, ["raw"] = 1 }
 
@@ -259,27 +193,6 @@ VALIDATOR["OK"] = function(v)
 	return OK
 end
 
-
-current["interface/ethernet/*0/ip"] = "192.168.95.1/24"
-current["interface/ethernet/*1/ip"] = "192.168.95.2/24"
-current["interface/ethernet/*0/mtu"] = 1500
-
-current["dns/forwarder/server"] = { "one", "two", "three" }
-current["dns/file"] = "afgljksdhfglkjsdhf glsjdfgsdfg\nsdfgkjsdfkljg\nsdfgsdg\nsdfgsdfg\n"
-
-
-new = copy_table(current)
-new["interface/ethernet/*1/ip"] = "192.168.95.4/24"
-new["interface/ethernet/*2/ip"] = "192.168.95.33"
-new["interface/ethernet/*0/mtu"] = nil
-
-new["iptables/*filter/*FORWARD/policy"] = "ACCEPT"
-new["iptables/*filter/*FORWARD/rule/*10"] = "-s 12.3.4 -j ACCEPT"
-new["iptables/*filter/*FORWARD/rule/*20"] = "-d 2.3.4.5 -j DROP"
---new["iptables2/*filter/*FORWARD/rule/*20"] = "-d 2.3.4.5 -j DROP"
-
-new["dns/forwarder/server"] = { "one", "three", "four" }
-new["dhcp/flag"] = "hello"
 
 --
 -- Return a hash containing a key for every node that is defined in
@@ -656,49 +569,5 @@ function delete(config, kp)
 			config[k] = nil
 		end
 	end
-end
-
-rc, err = set(new, "interface/ethernet/0/mtu", "1234")
-if not rc then print("ERROR: " .. err) end
-rc, err = set(new, "iptables/filter/INPUT/rule/0030", "-a -b -c")
-if not rc then print("ERROR: " .. err) end
-rc, err = set(new, "dns/forwarder/server", "a new one")
-if not rc then print("ERROR: " .. err) end
-
-delete(new, "iptables")
-
-show(current, new)
---dump(new)
---local xx = import("sample")
-
---show(xx, xx)
-
---
--- Build the work list
---
-work_list = build_work_list()
-
---print("\n\n")
---
--- Now run through and check the dependencies
---
-for key, fields in pairs(work_list) do
-	print("Work: " .. key)
-	for i,v in ipairs(fields) do
-		print("\t" .. v)
-	end
-
-	local depends = master[key]["depends"] or {}
-	for _,d in ipairs(depends) do
-		print("\tDEPEND: " .. d)
-		if work_list[d] then
-			print("\tSKIP THIS ONE DUE TO DEPENDS")
-			goto continue
-		end
-	end
-
-	print("DOING WOEK\n")
-	work_list[key] = nil
-::continue::
 end
 
