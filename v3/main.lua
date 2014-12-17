@@ -54,14 +54,12 @@ master["test/lee"] = { ["type"] = "name" }
 
 
 
---current["interface/ethernet/*0/ip"] = "192.168.95.1/24"
---current["interface/ethernet/*1/ip"] = "192.168.95.2/24"
---current["interface/ethernet/*2/ip"] = "192.168.95.33"
---current["interface/ethernet/*2/mtu"] = 1500
---current["interface/ethernet/*0/mtu"] = 1500
---current["interface/ethernet/fred"] = "yep"
+current["interface/ethernet/*0/ip"] = "192.168.95.1/24"
+current["interface/ethernet/*1/ip"] = "192.168.95.2/24"
+current["interface/ethernet/*2/ip"] = "192.168.95.33"
+current["interface/ethernet/*2/mtu"] = 1500
+current["interface/ethernet/*0/mtu"] = 1500
 
-current["dns/forwarder/server"] = { "one", "two", "three" }
 current["dns/file"] = "afgljksdhfglkjsdhf glsjdfgsdfg\nsdfgkjsdfkljg\nsdfgsdg\nsdfgsdfg\n"
 
 
@@ -70,7 +68,7 @@ current["dns/file"] = "afgljksdhfglkjsdhf glsjdfgsdfg\nsdfgkjsdfkljg\nsdfgsdg\ns
 
 new = copy_table(current)
 new["interface/ethernet/*1/ip"] = "192.168.95.4/24"
---new["interface/ethernet/*0/mtu"] = nil
+new["interface/ethernet/*0/mtu"] = nil
 --current["interface/ethernet/bill"] = "nope"
 
 new["interface/pppoe/*0/user-id"] = "lee"
@@ -90,7 +88,8 @@ new["iptables/set/*vpn-dst/item"] = { "1.2.3.4", "2.2.2.2", "8.8.8.8" }
 
 new["dns/forwarding/server"] = { "one", "three", "four" }
 new["dns/forwarding/cache-size"] =150
---new["dns/forwarding/listen-on"] = { "eth0" }
+new["dns/forwarding/listen-on"] = { "ethernet/0" }
+--new["dns/forwarding/listen-on"] = { "pppoe4" }
 --new["dns/forwarding/options"] = { "no-resolv", "other-stuff" }
 
 new["dns/domain-match/*xbox/domain"] = { "XBOXLIVE.COM", "xboxlive.com", "live.com" }
@@ -122,8 +121,9 @@ delete(new, "interface/ethernet/2")
 --delete(new, "dhcp")
 
 show(current, new)
+--dump(new)
 
-os.exit(0)
+--os.exit(0)
 
 --dump(new)
 ----local xx = import("sample")
@@ -141,13 +141,12 @@ function execute_work_using_func(funcname, work_list)
 
 		for key, fields in pairs(work_list) do
 			print("Work: " .. key)
-			for i,v in ipairs(fields) do
+			for v in each(fields) do
 				print("\t" .. v)
 			end
-			local depends = master[key]["depends"] or {}
-			for _,d in ipairs(depends) do
-				print("\tDEPEND: " .. d)
-				if work_list[d] then
+			for depend in each(master[key]["depends"] or {}) do
+				print("\tDEPEND: " .. depend)
+				if work_list[depend] then
 					print("\tSKIP THIS ONE DUE TO DEPENDS")
 					goto continue
 				end
@@ -170,11 +169,6 @@ function execute_work_using_func(funcname, work_list)
 		if not activity then return false, "some kind of dependency loop" end
 	end
 	return true
-end
-
-function callme(a)
-	print("GOT YOU")
-	return false
 end
 
 --

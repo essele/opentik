@@ -24,8 +24,7 @@ local process_table
 local function iptables(changes)
     print("Hello From IPTABLES")
 
-	local tables = node_list("iptables/*", changes)
-	for _,table in ipairs(tables) do
+	for table in each(node_list("iptables", changes, true)) do
 		print("TABLE: " .. table)
 		process_table(table, changes)
 	end
@@ -36,11 +35,11 @@ end
 -- 
 --
 function process_table(table, changes)
-    local state = process_changes(changes, string.format("iptables/*%s/", table))
+    local state = process_changes(changes, string.format("iptables/*%s", table))
 
-    for _,v in ipairs(state.added) do print("Added: "..v) end
-    for _,v in ipairs(state.removed) do print("Removed: "..v) end
-    for _,v in ipairs(state.changed) do print("Changed: "..v) end
+    for v in each(state.added) do print("Added: "..v) end
+    for v in each(state.removed) do print("Removed: "..v) end
+    for v in each(state.changed) do print("Changed: "..v) end
 	
 end
 

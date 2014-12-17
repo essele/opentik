@@ -88,10 +88,23 @@ function in_list(list, item)
 end
 
 --
+-- Utility each() iterator
+--
+function each(t)
+	local i = 0
+
+	return function()
+		i = i + 1
+		return t[i]
+	end
+end
+
+--
 -- Check to see if the prefix of line matches token, but where
 -- the next char is either eol or the sep
 --
 function prefix_match(line, token, sep)
+	if #token == 0 then return true end
 	if line:sub(1, #token) == token then
 		local c = line:sub(#token+1, #token+1)
 		if c == "" or c == sep then return true end

@@ -45,15 +45,11 @@ end
 function config_vars(prefix, kv)
 	local rc = {}
 
-	local master_list = node_list(prefix, master)
-	for _,k in ipairs(master_list) do
-		local kp = prefix .. k
+	for k in each(node_list(prefix, master)) do
+		local kp = prefix .. "/" .. k
 		if master[kp].default then rc[k] = master[kp].default end
 	end
-
-	for _,k in ipairs(node_list(prefix, kv)) do
-		rc[k] = kv[prefix .. k]
-	end
+	for k in each(node_list(prefix, kv)) do rc[k] = kv[prefix .. "/" .. k] end
 	return rc
 end
 
@@ -63,7 +59,7 @@ end
 --
 function sprintf_list(format, list)
 	local rc = ""
-	for _,v in ipairs(list) do
+	for v in each(list) do
 		rc = rc .. string.format(format, v)
 	end
 	return rc
@@ -89,7 +85,7 @@ local function dnsmasq_commit(changes)
 	-- First process the forwarding section
 	--
 	if node_exists("dns/forwarding", CF_new) then
-		local forwarding = config_vars("dns/forwarding/", CF_new)
+		local forwarding = config_vars("dns/forwarding", CF_new)
 		io.write("# -- forwarding --\n\n")
 		io.write(string.format("cache-size %s\n", forwarding["cache-size"]))
 		io.write(sprintf_list("interface %s\n", forwarding["listen-on"] or {}))
@@ -103,10 +99,10 @@ local function dnsmasq_commit(changes)
 	--
 	if node_exists("dns/domain-match", CF_new) then
 		io.write("# -- domain-match --\n\n")
-		for _,v in ipairs(node_list("dns/domain-match/", CF_new)) do
-			local dmatch = config_vars("dns/domain-match/"..v.."/", CF_new)
+		for v in each(node_list("dns/domain-match", CF_new)) do
+			local dmatch = config_vars("dns/domain-match/"..v, CF_new)
 			if dmatch.group then
-				io.write("# ("..v..")\n")
+				io.write("# ("..v:sub(2)..")\n")
 				io.write(sprintf_list("ipset /%s/"..dmatch.group.."\n", dmatch.domain or {}))
 			end
 		end
@@ -129,8 +125,8 @@ local function dnsmasq_precommit(changes)
 	-- dns/forwarding has a 'listen-on' interface list
 	--
 	if CF_new["dns/forwarding/listen-on"] then
-		for _,interface in ipairs(CF_new["dns/forwarding/listen-on"]) do
-			if not node_exists("interface/ethernet/"..interface, CF_new) then
+		for interface in each(CF_new["dns/forwarding/listen-on"]) do
+			if not node_exists(interface_path(interface), CF_new) then
 				return false, string.format("dns/forwarding/listen-on interface not valid: %s", interface)
 			end
 		end
@@ -140,7 +136,8 @@ local function dnsmasq_precommit(changes)
 	--
 	if node_exists("dns/domain-match", CF_new) then
 		print("DOMAINMATCH")
-		for _,node in ipairs(matching_nodes("dns/domain-match/%/group", CF_new)) do
+		for node in each(matching_nodes("dns/domain-match/%/group", CF_new)) do
+--		for node in each(prefix_list("dns/domain-match/%/group", CF_new)) do
 			local set = CF_new[node]
 			if not node_exists("iptables/set/*"..set, CF_new) then
 				return false, string.format("%s ipset not valid: %s", node, set)

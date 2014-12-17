@@ -33,18 +33,21 @@
 local function ethernet_commit(changes)
 	print("Hello From Interface")
 
-	local state = process_changes(changes, "interface/ethernet/")
+	local state = process_changes(changes, "interface/ethernet")
 
-	for _,v in ipairs(state.added) do print("Added: "..v) end
-	for _,v in ipairs(state.removed) do print("Removed: "..v) end
-	for _,v in ipairs(state.changed) do print("Changed: "..v) end
+	for v in each(state.added) do print("Added: "..v) end
+	for v in each(state.removed) do print("Removed: "..v) end
+	for v in each(state.changed) do print("Changed: "..v) end
 	
 	return true
 end
 
 
 --
+-- If deleted then remove peer config
+-- If added or modded then (re-)create the peer config
 --
+-- Work out if we need to restart anything.
 --
 local function pppoe_commit(changes)
 	print("PPPOE")
@@ -84,6 +87,26 @@ VALIDATOR["mtu"] = function(v)
 	return OK
 end
 
+--
+-- Convert any format into a full keypath, this is used by any function that
+-- takes any interface as an argument. It allows complete flexibility in what
+-- can be used.
+--
+function interface_path(interface)
+	local t, i = interface:match("^interface/([^/]+)/%*?(%d+)$")
+	if t then return string.format("interface/%s/*%i", t, i) end
+
+	local t, i = interface:match("^([^/]+)/%*?(%d+)$")
+	if t then return string.format("interface/%s/*%s", t, i) end
+
+	local i = interface:match("^eth(%d+)$")
+	if i then return string.format("interface/ethernet/*%s", i) end
+
+	local i = interface:match("^pppoe(%d+)$")
+	if i then return string.format("interface/pppoe/*%s", i) end
+
+	return nil
+end
 
 
 --

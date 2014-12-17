@@ -56,27 +56,45 @@ function find_master_key(k)
 	return k:gsub("/%*[^/]+", "/*")
 end
 
-
+-- 
+-- Given a prefix and a kv return a list of the nodes that are within the
+-- prefix (a slash is added here to ensure we match something that can be
+-- turned into a list of nodes)
 --
--- Given a wildcard key (ending in a /*) return a list of the wildcards that are
--- mentioned within the provided kv table.
+-- If wc is true, then we only match wildcard elements
 --
-function node_list(wk, kv)
-	local uniq = {}
-	local rc = {}
+function node_list(prefix, kv, wc)
+	local uniq, rc, match = {}, {}, ""
 
+	if #prefix > 0 then match = prefix:gsub("([%-%+%.%*])", "%%%1") .. "/" end
+	match = match .. "(" .. ((wc and "%*") or "") .. "[^/]+)"
+	
 	for k,_ in pairs(kv) do
-		local wklen = wk:len()
-
-		if(k:sub(1, wklen) == wk) then
-			local elem = k:sub(wklen+1):gsub("/.*$", "")
-			uniq[elem] = 1
-		end
+		local elem = k:match(match)
+		if elem then uniq[elem] = 1 end
 	end
 	for k,_ in pairs(uniq) do table.insert(rc, k) end
 	table.sort(rc)
 	return rc
 end
+
+--
+-- Return all items that match the prefix (no slash is added), we escape
+-- a few of the regex chars, but do allow % as a wildcard for a whole section
+--
+function matching_list(prefix,kv)
+	local rc = {}
+
+	match = "^" .. prefix:gsub("([%-%+%.%*])", "\001%1"):gsub("%%", "[^/]+"):gsub("\001(.)", "%%%1")
+	for k,_ in pairs(kv) do
+		if k:match(match) then table.insert(rc, k) end
+	end
+	return rc
+end
+
+--
+-- See if a given node exists in the kv
+--
 function node_exists(prefix, kv)
 	for k,_ in pairs(kv) do
 		if prefix_match(k, prefix, "/") then return true end
@@ -93,15 +111,10 @@ end
 --
 function find_master_function(wk) 
 	while wk:len() > 0 do
-		print("Looking at ["..wk.."]")
 		wk = wk:gsub("/?[^/]+$", "")
 
-		if master[wk] and master[wk]["commit"] then
-			return wk, wk
-		end
-		if master[wk] and master[wk]["delegate"] then
-			return master[wk]["delegate"], wk
-		end
+		if master[wk] and master[wk]["commit"] then return wk, wk end
+		if master[wk] and master[wk]["delegate"] then return master[wk]["delegate"], wk end
 	end
 
 	return nil
@@ -145,11 +158,10 @@ end
 function process_changes(changes, keypath)
 	local rc = { ["added"] = {}, ["removed"]= {}, ["changed"] = {} }
 
-	local items = node_list(keypath, changes)
-	for _,item in ipairs(items) do
+	for item in each(node_list(keypath, changes)) do
 
-		local in_old = next(node_list(keypath .. item, CF_current))
-		local in_new = next(node_list(keypath .. item, CF_new))
+		local in_old = node_exists(keypath.."/"..item, CF_current)
+		local in_new = node_exists(keypath.."/"..item, CF_new)
 
 		if in_old and in_new then table.insert(rc["changed"], item)
 		elseif in_old then table.insert(rc["removed"], item)
@@ -185,7 +197,7 @@ function dump(config)
 
 		if mc["list"] then
 			io.write(string.format("%s: <list>\n", k))
-			for _,l in ipairs(v) do
+			for l in each(v) do
 				io.write(string.format("\t|%s\n", l))
 			end
 			io.write("\t<end>\n")
@@ -346,7 +358,7 @@ function show(current, new, kp)
 		local old_list, new_list = old_all[kp] or {}, new_all[kp] or {}
 		local all_keys = sorted_values(old_list, new_list)
 
-		for _,value in ipairs(all_keys) do
+		for value in each(all_keys) do
 			local disposition = (not in_list(old_list, value) and "+") or 
 										(not in_list(new_list, value) and "-") or " "
 
@@ -392,10 +404,9 @@ function show(current, new, kp)
 		local parent = parent or ""
 		local indent_add = 4
 
-		local nodes = node_list(kp, combined)
-		for i,key in ipairs(nodes) do
+		for key in each(node_list(kp, combined)) do
 			local dispkey = key:gsub("^%*", "")
-			local newkp = kp .. key
+			local newkp = join(kp, key, "/")
 			local mc = master[find_master_key(newkp)] or {}
 			local disposition, value = disposition_and_value(newkp)
 
@@ -409,11 +420,11 @@ function show(current, new, kp)
 				-- We must be a container
 				--
 				if mc["with_children"] then
-					int_show(newkp .. "/", combined, indent, parent .. dispkey .. " ")
+					int_show(newkp, combined, indent, parent .. dispkey .. " ")
 				else
 					local header, footer = container_header_and_footer(indent, parent, newkp)
 					io.write(header)
-					int_show(newkp .. "/", combined, indent+4)
+					int_show(newkp, combined, indent+4)
 					io.write(footer)
 				end
 			end
