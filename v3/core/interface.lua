@@ -35,10 +35,44 @@ local function ethernet_commit(changes)
 
 	local state = process_changes(changes, "interface/ethernet")
 
-	for v in each(state.added) do print("Added: "..v) end
-	for v in each(state.removed) do print("Removed: "..v) end
-	for v in each(state.changed) do print("Changed: "..v) end
-	
+	--
+	-- Remove any interface that has been removed from the system...
+	--
+	for ifnum in each(state.removed) do 
+		print("Removed: "..ifnum) 
+		local physical = interface_name("ethernet/"..ifnum)
+
+		print(string.format("# ip addr flush dev %s", physical))
+		print(string.format("# ip link set dev %s down", physical))
+	end
+
+	--
+	-- Modify an interface ... we'll work through the actual changes
+	--
+	-- TODO: is it worth it?  Or do we just treat it as new?
+	--
+	for ifnum in each(state.changed) do 
+		print("Changed: "..ifnum) 
+		local cf = node_vars("interface/ethernet/"..ifnum, CF_new)
+		local physical = interface_name("ethernet/"..ifnum)
+		-- TODO
+	end
+
+	--
+	-- Add an interface
+	--
+	for ifnum in each(state.added) do 
+		print("Added: "..ifnum) 
+		local cf = node_vars("interface/ethernet/"..ifnum, CF_new)
+		local physical = interface_name("ethernet/"..ifnum)
+
+		print(string.format("# ip addr flush dev %s", physical))
+		if(cf.ip) then print(string.format("# ip addr add %s brd + dev %s", cf.ip, physical)) end
+		if(cf.mtu) then print(string.format("# ip link set dev %s mtu %s", physical, cf.mtu)) end
+		print(string.format("# ip link set dev %s up", physical ))
+	end	
+
+
 	return true
 end
 
@@ -94,7 +128,7 @@ end
 --
 function interface_path(interface)
 	local t, i = interface:match("^interface/([^/]+)/%*?(%d+)$")
-	if t then return string.format("interface/%s/*%i", t, i) end
+	if t then return string.format("interface/%s/*%s", t, i) end
 
 	local t, i = interface:match("^([^/]+)/%*?(%d+)$")
 	if t then return string.format("interface/%s/*%s", t, i) end
@@ -106,6 +140,17 @@ function interface_path(interface)
 	if i then return string.format("interface/pppoe/*%s", i) end
 
 	return nil
+end
+
+--
+-- Given a name in any format, work out what the physical interface
+-- should be...
+--
+function interface_name(path)
+	local i = path:match("ethernet/%*?(%d+)$") or path:match("eth(%d)+$")
+	if i then return string.format("eth%s", i) end
+	local i = path:match("pppoe/%*?(%d+)$") or path:match("pppoe(%d)$")
+	if i then return string.format("pppoe%s", i) end
 end
 
 

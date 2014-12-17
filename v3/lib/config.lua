@@ -26,14 +26,16 @@ OK=1
 PARTIAL=2
 
 --
--- Remove all elements that start with the prefix and return them in a list
+-- Remove all elements that start with the prefix and return them in a list, if
+-- the prefix ends with a * then we leave it alone, otherwise we add a slash to
+-- ensure a correct match.
 --
 function remove_prefixed(list, prefix)
-	local rc = {}
+	local rc, i = {}, 1
 
-	local i = 1
+	if(prefix:sub(-1) ~= "*") then prefix = prefix .. "/" end	
 	while(i <= #list) do
-		if prefix_match(list[i], prefix, "/") then
+		if list[i]:sub(1,#prefix) == prefix then
 			table.insert(rc, list[i])
 			table.remove(list, i)
 		else
@@ -43,16 +45,12 @@ function remove_prefixed(list, prefix)
 	return rc
 end
 
-
 --
 -- Find the master record for this entry. If we have any sections
 -- starting the with * then it's a wildcard so we can remove the
 -- following text to map directly to the wildcard master entry.
 --
 function find_master_key(k)
-	--
-	-- Revert back to just wildcards...
-	--
 	return k:gsub("/%*[^/]+", "/*")
 end
 
@@ -103,6 +101,22 @@ function node_exists(prefix, kv)
 end
 
 --
+-- Take a prefix and build a hash of elements and values (using the
+-- defaults it provided in the master config)
+--
+function node_vars(prefix, kv)
+	local rc = {}
+	local mprefix = find_master_key(prefix)
+
+	for k in each(node_list(mprefix, master)) do
+		rc[k] = master[mprefix.."/"..k].default
+	end
+	for k in each(node_list(prefix, kv)) do rc[k] = kv[prefix .. "/" .. k] end
+	return rc
+end
+
+
+--
 -- Given a master key, work back through the elements until we find one with
 -- a function, then return that key.
 --
@@ -121,6 +135,22 @@ function find_master_function(wk)
 end
 
 --
+-- Compare items a and b, if they are tables then do a table
+-- comparison
+--
+function are_the_same(a, b)
+	if type(a) == "table" and type(b) == "table" then
+		if #a ~= #b then return false end
+		for i, v in ipairs(a) do
+			if b[i] ~= v then return false end
+		end
+		return true
+	else 
+		return a == b
+	end
+end
+
+--
 --
 --
 --
@@ -131,13 +161,20 @@ function build_work_list(current, new)
 	while #sorted > 0 do
 		local key = sorted[1]
 
-		if new[key] ~= current[key] then
+--		if new[key] ~= current[key] then
+		if not are_the_same(new[key], current[key]) then
 			local mkey = find_master_key(key)
 
 			local fkey, origkey = find_master_function(mkey)
 			if fkey then
 				if rc[fkey] == nil then rc[fkey] = {} end
 				add_to_list(rc[fkey], remove_prefixed(sorted, origkey))
+				--
+				-- TODO Don't do the remove_prefixed perhaps we have
+				-- TODO to process each line so we remove ones that
+				-- TODO are the same ... but probably do it here so
+				-- TODO that we don't keep doing find_master_function
+				--
 			else
 				-- TODO: what do we do here??
 				print("No function found for " .. key)
@@ -155,16 +192,22 @@ end
 --
 -- NOTE: uses the global config variables
 --
-function process_changes(changes, keypath)
+-- The wc arg is passed straight to node_list so that we can
+-- limit the processing to wildcard entries
+--
+function process_changes(changes, keypath, wc)
 	local rc = { ["added"] = {}, ["removed"]= {}, ["changed"] = {} }
 
-	for item in each(node_list(keypath, changes)) do
+	for item in each(node_list(keypath, changes, wc)) do
 
-		local in_old = node_exists(keypath.."/"..item, CF_current)
-		local in_new = node_exists(keypath.."/"..item, CF_new)
+--		local in_old = node_exists(keypath.."/"..item, CF_current)
+--		local in_new = node_exists(keypath.."/"..item, CF_new)
+		v_old = CF_current[keypath.."/"..item]
+		v_new = CF_current[keypath.."/"..item]
 
-		if in_old and in_new then table.insert(rc["changed"], item)
-		elseif in_old then table.insert(rc["removed"], item)
+		if v_old and v_new then 
+			if v_old ~= v_new then table.insert(rc["changed"], item) end
+		elseif v_old then table.insert(rc["removed"], item)
 		else table.insert(rc["added"], item) end
 	end
 	return rc

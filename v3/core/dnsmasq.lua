@@ -19,29 +19,10 @@
 
 
 --
--- Search through kv for anything that matches the search, we replace
--- % with a non-slash one or more
---
-function matching_nodes(search, kv)
-	local rc = {}
-
-	-- first flag any chars we want to escape
-	search = search:gsub("([%-%+%.])", "=%1")
-	-- now do the % replacement
-	search = search:gsub("%%", "[^/]+")
-	-- now put back the escaped ones
-	search = search:gsub("=(.)", "%%%1")
-
-	for k,_ in pairs(kv) do
-		if k:match(search) then table.insert(rc, k) end
-	end
-	return rc
-end
-
---
 -- Take a prefix and build a hash of elements and values (using the
 -- defaults it provided in the master config)
 --
+--[[
 function config_vars(prefix, kv)
 	local rc = {}
 
@@ -52,6 +33,7 @@ function config_vars(prefix, kv)
 	for k in each(node_list(prefix, kv)) do rc[k] = kv[prefix .. "/" .. k] end
 	return rc
 end
+]]--
 
 --
 -- Output build a string that's a format output once for each
@@ -85,7 +67,7 @@ local function dnsmasq_commit(changes)
 	-- First process the forwarding section
 	--
 	if node_exists("dns/forwarding", CF_new) then
-		local forwarding = config_vars("dns/forwarding", CF_new)
+		local forwarding = node_vars("dns/forwarding", CF_new)
 		io.write("# -- forwarding --\n\n")
 		io.write(string.format("cache-size %s\n", forwarding["cache-size"]))
 		io.write(sprintf_list("interface %s\n", forwarding["listen-on"] or {}))
@@ -100,7 +82,7 @@ local function dnsmasq_commit(changes)
 	if node_exists("dns/domain-match", CF_new) then
 		io.write("# -- domain-match --\n\n")
 		for v in each(node_list("dns/domain-match", CF_new)) do
-			local dmatch = config_vars("dns/domain-match/"..v, CF_new)
+			local dmatch = node_vars("dns/domain-match/"..v, CF_new)
 			if dmatch.group then
 				io.write("# ("..v:sub(2)..")\n")
 				io.write(sprintf_list("ipset /%s/"..dmatch.group.."\n", dmatch.domain or {}))
@@ -136,8 +118,7 @@ local function dnsmasq_precommit(changes)
 	--
 	if node_exists("dns/domain-match", CF_new) then
 		print("DOMAINMATCH")
-		for node in each(matching_nodes("dns/domain-match/%/group", CF_new)) do
---		for node in each(prefix_list("dns/domain-match/%/group", CF_new)) do
+		for node in each(matching_list("dns/domain-match/%/group", CF_new)) do
 			local set = CF_new[node]
 			if not node_exists("iptables/set/*"..set, CF_new) then
 				return false, string.format("%s ipset not valid: %s", node, set)

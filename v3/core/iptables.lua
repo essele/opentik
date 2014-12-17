@@ -17,17 +17,111 @@
 --  along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ------------------------------------------------------------------------------
 
+--
+-- Sets should be a simple case of create/delete/modify
+--
+local function ipt_set_commit(changes)
+	local state = process_changes(changes, "iptables/set")
+
+	for set in each(state.added) do
+		io.write(string.format("# (add set %s)\n", setname))
+		local cf = node_vars("iptables/set/"..set, CF_new)
+		local setname = set:gsub("*", "")
+
+		io.write(string.format("# ipset create %s %s\n", setname, cf["type"]))
+		for item in each(cf.item) do
+			io.write(string.format("# ipset add %s %s\n", setname, item))
+		end
+	end
+	for set in each(state.removed) do
+		io.write(string.format("# (remove set %s)\n", setname))
+		local setname = set:gsub("*", "")
+		io.write(string.format("# ipset -q destroy %s\n", setname))
+	end
+	for set in each(state.changed) do
+		local setname = set:gsub("*", "")
+		local old_cf = node_vars("iptables/set/"..set, CF_current)
+		local cf = node_vars("iptables/set/"..set, CF_new)
+		io.write(string.format("# (change set %s)\n", setname))
+
+		if old_cf["type"] ~= cf["type"] then
+			-- change of type means destroy and recreate
+			io.write(string.format("# ipset -q destroy %s\n", setname))
+			io.write(string.format("# ipset create %s %s\n", setname, cf["type"]))
+		else
+			-- remove any old record
+			for item in each(old_cf.item) do
+				if not in_list(cf.item, item) then
+					io.write(string.format("# ipset -! del %s %s\n", setname, item))
+				end
+			end
+		end
+		-- now add back in any new records
+		for item in each(cf.item) do
+			if not in_list(old_cf.item, item) then
+				io.write(string.format("# ipset add %s %s\n", setname, item))
+			end
+		end
+	end
+	return true
+end
+
+
+--------------------------------------------------------------------------------
+--
+-- The main iptables code. We start by building a list of tables that we will
+-- need to rebuild, this is by looking at the change list, but also processing
+-- the variables and seeing which chains they are referenced in.
+--
+-- Once we know which tables to re-create we then look for chain dependencies
+-- and work through each chain in turn until we have completed them all.
+--
+--------------------------------------------------------------------------------
+
 -- forward declare, so we can keep code order sensible
 local process_table
 
 
-local function iptables(changes)
-    print("Hello From IPTABLES")
+local function ipt_table(changes)
 
-	for table in each(node_list("iptables", changes, true)) do
-		print("TABLE: " .. table)
-		process_table(table, changes)
+	--
+	-- Return a list of tables who reference the variable
+	--
+	function find_variable_references(var)
+		local rc = {}
+		for rule in each(matching_list("iptables/%/%/rule/%", CF_new)) do
+			if CF_new[rule]:match("%["..var.."%]") then
+				-- pull out the table name
+				rc[rule:match("^iptables/(%*[^/]+)")] = 1
+			end
+		end
+		return keys_to_values(rc)
 	end
+
+
+	--
+	-- Build a list of tables we will need to rebuild, start with
+	-- any added or changed...
+	--
+    print("Hello From IPTABLES")
+	local state = process_changes(changes, "iptables", true)
+	local rebuild = {}
+	
+	add_to_list(rebuild, state.added)
+	add_to_list(rebuild, state.changed)
+	
+	--
+	-- See if we have any variables that would cause additional
+	-- tables to be reworked
+	--
+	for var in each(node_list("iptables/variable", changes)) do
+		print("Changed var: ["..var.."]")
+		add_to_list(rebuild, find_variable_references(var))
+	end
+
+	rebuild = uniq(rebuild)
+	for t in each(rebuild) do print("NEED TO REBUILD: " .. t) end
+
 	return true
 end
 
@@ -76,20 +170,36 @@ end
 --
 -- Master Structure for iptables
 --
-master["iptables"] = { ["commit"] = iptables }
-master["iptables/*"] = { ["style"] = "iptables_table" }
-master["iptables/*/*"] = { ["style"] = "iptables_chain" }
-master["iptables/*/*/policy"] = { ["type"] = "iptables_policy" }
-master["iptables/*/*/rule"] = {     ["with_children"] = 1 }
-master["iptables/*/*/rule/*"] = {   ["style"] = "OK",
-                                    ["type"] = "iptables_rule",
-                                    ["quoted"] = 1 }
+master["iptables"] = 					{}
 
-master["iptables/set"] = {}
-master["iptables/set/*"] = { 		["style"] = "iptables_set" }
-master["iptables/set/*/type"] = { 	["type"] = "iptables_set_type", 
-									["default"] = "hash:ip" }
-master["iptables/set/*/item"] = {	["type"] = "hostname_or_ip",
-									["list"] = 1 }
+--
+-- The main tables/chains/rules definition
+--
+master["iptables/*"] = 					{ ["commit"] = ipt_table,
+										  ["depends"] = { "iptables/set" },
+										  ["style"] = "iptables_table" }
+master["iptables/*/*"] = 				{ ["style"] = "iptables_chain" }
+master["iptables/*/*/policy"] = 		{ ["type"] = "iptables_policy" }
+master["iptables/*/*/rule"] = 			{ ["with_children"] = 1 }
+master["iptables/*/*/rule/*"] = 		{ ["style"] = "OK",
+    	                               	  ["type"] = "iptables_rule",
+       	                            	  ["quoted"] = 1 }
+--
+-- Support variables for replacement into iptables rules
+--
+master["iptables/variable"] =			{ ["delegate"] = "iptables/*" }
+master["iptables/variable/*"] =			{ ["style"] = "ipt_variable" }
+master["iptables/variable/*/value"] =	{ ["type"] = "OK",
+										  ["list"] = 1 }
+
+--
+-- Creation of ipset with pre-poulation of items if needed
+--
+master["iptables/set"] = 				{ ["commit"] = ipt_set_commit }
+master["iptables/set/*"] = 				{ ["style"] = "iptables_set" }
+master["iptables/set/*/type"] = 		{ ["type"] = "iptables_set_type", 
+										  ["default"] = "hash:ip" }
+master["iptables/set/*/item"] = 		{ ["type"] = "hostname_or_ip",
+										  ["list"] = 1 }
 
 

@@ -34,9 +34,12 @@ end
 --
 function values_to_keys(t)
 	local rc = {}
-	for _, k in ipairs(t) do
-		rc[k] = 1
-	end
+	for _, k in ipairs(t) do rc[k] = 1 end
+	return rc
+end
+function keys_to_values(t)
+	local rc = {}
+	for k, _ in pairs(t) do table.insert(rc, k) end
 	return rc
 end
 
@@ -72,15 +75,17 @@ end
 -- Add the second list to the first (updating the first)
 --
 function add_to_list(l1, l2)
-	for _,v in ipairs(l2) do
+	for _,v in ipairs(l2 or {}) do
 		table.insert(l1, v)
 	end
 end
 
 --
--- Find a given element within a list
+-- Find a given element within a list (cope with nil)
 --
 function in_list(list, item)
+	list = list or {}
+
 	for _,k in ipairs(list) do
 		if k == item then return true end
 	end
@@ -88,9 +93,25 @@ function in_list(list, item)
 end
 
 --
+-- Return only the uniq items in a list (keep order)
+--
+function uniq(t)
+	local rc, u = {}, {}
+	
+	for _,v in ipairs(t) do
+		if not u[v] then
+			table.insert(rc, v)
+			u[v] = 1
+		end
+	end
+	return rc
+end
+
+--
 -- Utility each() iterator
 --
 function each(t)
+	t = t or {}
 	local i = 0
 
 	return function()

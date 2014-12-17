@@ -54,11 +54,11 @@ master["test/lee"] = { ["type"] = "name" }
 
 
 
-current["interface/ethernet/*0/ip"] = "192.168.95.1/24"
+--current["interface/ethernet/*0/ip"] = "192.168.95.1/24"
 current["interface/ethernet/*1/ip"] = "192.168.95.2/24"
 current["interface/ethernet/*2/ip"] = "192.168.95.33"
 current["interface/ethernet/*2/mtu"] = 1500
-current["interface/ethernet/*0/mtu"] = 1500
+--current["interface/ethernet/*0/mtu"] = 1500
 
 current["dns/file"] = "afgljksdhfglkjsdhf glsjdfgsdfg\nsdfgkjsdfkljg\nsdfgsdg\nsdfgsdfg\n"
 
@@ -68,7 +68,8 @@ current["dns/file"] = "afgljksdhfglkjsdhf glsjdfgsdfg\nsdfgkjsdfkljg\nsdfgsdg\ns
 
 new = copy_table(current)
 new["interface/ethernet/*1/ip"] = "192.168.95.4/24"
-new["interface/ethernet/*0/mtu"] = nil
+new["interface/ethernet/*0/ip"] = "192.168.98.44/24"
+new["interface/ethernet/*0/mtu"] = 1492
 --current["interface/ethernet/bill"] = "nope"
 
 new["interface/pppoe/*0/user-id"] = "lee"
@@ -78,13 +79,18 @@ new["interface/pppoe/*0/mtu"] = 1492
 
 
 new["iptables/*filter/*FORWARD/policy"] = "ACCEPT"
-new["iptables/*filter/*FORWARD/rule/*10"] = "-s 12.3.4 -j ACCEPT"
-new["iptables/*filter/*FORWARD/rule/*20"] = "-d 2.3.4.5 -j DROP"
---new["iptables2/*filter/*FORWARD/rule/*20"] = "-d 2.3.4.5 -j DROP"
+new["iptables/*filter/*FORWARD/rule/*10"] = "-s 12.3.4 -p [fred] -j ACCEPT"
+new["iptables/*filter/*FORWARD/rule/*20"] = "-d -a [bill] -b [fred] 2.3.4.5 -j DROP"
+new["iptables/*filter/*FORWARD/rule/*30"] = "-d 2.3.4.5 -j DROP"
 --
+--
+current["iptables/set/*vpn-dst/type"] = "hash:ip"
+current["iptables/set/*vpn-dst/item"] = { "1.2.3.4", "2.2.2.2", "8.8.8.8" }
 
 new["iptables/set/*vpn-dst/type"] = "hash:ip"
-new["iptables/set/*vpn-dst/item"] = { "1.2.3.4", "2.2.2.2", "8.8.8.8" }
+new["iptables/set/*vpn-dst/item"] = { "2.2.2.2", "8.8.8.8" }
+
+new["iptables/variable/*fred/value"] = { "one", "rwo" }
 
 new["dns/forwarding/server"] = { "one", "three", "four" }
 new["dns/forwarding/cache-size"] =150
@@ -111,7 +117,7 @@ rc, err = set(new, "iptables/filter/INPUT/rule/0030", "-a -b -c")
 if not rc then print("ERROR: " .. err) end
 
 rc, err = set(new, "iptables/nat/PREROUTING/rule/0010", "-a -b -c")
-rc, err = set(new, "iptables/mangle/PREROUTING/rule/0010", "-a -b -c")
+rc, err = set(new, "iptables/mangle/PREROUTING/rule/0010", "-a -b -x [fred] -c")
 rc, err = set(new, "iptables/nat/POSTROUTING/rule/0020", "-a -b -c")
 
 
@@ -144,7 +150,7 @@ function execute_work_using_func(funcname, work_list)
 			for v in each(fields) do
 				print("\t" .. v)
 			end
-			for depend in each(master[key]["depends"] or {}) do
+			for depend in each(master[key]["depends"]) do
 				print("\tDEPEND: " .. depend)
 				if work_list[depend] then
 					print("\tSKIP THIS ONE DUE TO DEPENDS")
