@@ -51,10 +51,29 @@ local function ethernet_commit(changes)
 	--
 	-- TODO: is it worth it?  Or do we just treat it as new?
 	--
+	print("HERE")
 	for ifnum in each(state.changed) do 
 		print("Changed: "..ifnum) 
 		local cf = node_vars("interface/ethernet/"..ifnum, CF_new)
+		local oldcf = node_vars("interface/ethernet/"..ifnum, CF_current)
 		local physical = interface_name("ethernet/"..ifnum)
+
+		local changed = values_to_keys(node_list("interface/ethernet/"..ifnum, changes))
+		if changed.ip then
+			print(string.format("# ip addr del %s dev %s", oldcf.ip, physical))
+			print(string.format("# ip addr add %s dev %s", cf.ip, physical))
+		end
+		if changed.mtu then
+			print(string.format("# ip link set dev %s mtu %s", physical, cf.mtu))
+		end
+		if changed.disabled then
+			print(string.format("# ip link set dev %s %s", physical, 
+							(cf.disabled and "down") or "up" ))
+		end
+		
+		for p in each(changed) do
+			print("CAHNANANAN: " .. p)
+		end
 		-- TODO
 	end
 
@@ -69,7 +88,7 @@ local function ethernet_commit(changes)
 		print(string.format("# ip addr flush dev %s", physical))
 		if(cf.ip) then print(string.format("# ip addr add %s brd + dev %s", cf.ip, physical)) end
 		if(cf.mtu) then print(string.format("# ip link set dev %s mtu %s", physical, cf.mtu)) end
-		print(string.format("# ip link set dev %s up", physical ))
+		print(string.format("# ip link set dev %s %s", physical, (cf.disabled and "down") or "up" ))
 	end	
 
 
@@ -107,6 +126,9 @@ local function pppoe_precommit(changes)
 			end
 			if ethcf.ip then
 				return false, string.format("attach interface must have no IP address for pppoe/%s: %s", ifnum, ifpath)
+			end
+			if ethcf.disabled and not cf.disabled then
+				return false, string.format("attach interface must be enabled for pppoe/%s: %s", ifnum, ifpath)
 			end
 		else
 			return false, "required interface in attach field"
@@ -200,18 +222,23 @@ end
 
 
 --
--- Main interface config definition
+-- Ethernet interfaces...
 --
 master["interface"] = {}
-master["interface/ethernet"] = 				{ ["commit"] = ethernet_commit,
-								 			  ["depends"] = { "iptables" }, 
-											  ["with_children"] = 1 }
+master["interface/ethernet"] = { 
+	["commit"] = ethernet_commit,
+	["depends"] = { "iptables" }, 
+	["with_children"] = 1
+}
+
 master["interface/ethernet/*"] = 			{ ["style"] = "ethernet_if" }
 master["interface/ethernet/*/ip"] = 		{ ["type"] = "ipv4" }
 master["interface/ethernet/*/mtu"] = 		{ ["type"] = "mtu" }
---master["interface/ethernet/fred"] = { ["type"] = "ipv4" }
---master["interface/ethernet/bill"] = { ["type"] = "ipv4" }
+master["interface/ethernet/*/disabled"] = 	{ ["type"] = "boolean" }
 
+--
+-- pppoe interfaces...
+--
 master["interface/pppoe"] = {
 	["commit"] = pppoe_commit,
 	["precommit"] = pppoe_precommit,
@@ -225,6 +252,12 @@ master["interface/pppoe/*/default-route"] =	{ ["type"] = "OK" }
 master["interface/pppoe/*/mtu"] =			{ ["type"] = "mtu" }
 master["interface/pppoe/*/user-id"] =		{ ["type"] = "OK" }
 master["interface/pppoe/*/password"] =		{ ["type"] = "OK" }
+master["interface/pppoe/*/disabled"] = 		{ ["type"] = "boolean" }
 
+--
+-- If we change an underlying ethernet interface then it may have
+-- a knock on effect on a pppoe interface, so we should trigger
+-- a check
+--
 add_trigger("interface/ethernet/*", "interface/pppoe/@ethernet_change")
 

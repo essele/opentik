@@ -255,12 +255,12 @@ function process_changes(changes, keypath, wc)
 
 	for item in each(node_list(keypath, changes, wc)) do
 
-		v_old = CF_current[keypath.."/"..item]
-		v_new = CF_current[keypath.."/"..item]
+		is_old = node_exists(keypath.."/"..item, CF_current)
+		is_new = node_exists(keypath.."/"..item, CF_new)
 
-		if not v_old and not v_new then table.insert(rc["triggers"], item)
-		elseif v_old and v_new then table.insert(rc["changed"], item)
-		elseif v_old then table.insert(rc["removed"], item)
+		if not is_old and not is_new then table.insert(rc["triggers"], item)
+		elseif is_old and is_new then table.insert(rc["changed"], item)
+		elseif is_old then table.insert(rc["removed"], item)
 		else table.insert(rc["added"], item) end
 	end
 	return rc

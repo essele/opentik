@@ -67,11 +67,14 @@ current["interface/pppoe/*0/attach"] = "eth0"
 current["interface/pppoe/*0/password"] = "hidden"
 current["interface/pppoe/*0/default-route"] = "auto"
 current["interface/pppoe/*0/mtu"] = 1492
-
+current["interface/pppoe/*0/disabled"] = true
 
 new = copy_table(current)
 new["interface/ethernet/*1/ip"] = "192.168.95.4/24"
+new["interface/ethernet/*1/disabled"] = true
 new["interface/ethernet/*0/ip"] = "192.168.98.44/24"
+new["interface/ethernet/*0/ip"] = nil
+--new["interface/ethernet/*0/disabled"] = true
 new["interface/ethernet/*0/mtu"] = 1492
 --current["interface/ethernet/bill"] = "nope"
 
