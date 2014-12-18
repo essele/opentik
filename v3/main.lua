@@ -62,8 +62,11 @@ current["interface/ethernet/*2/mtu"] = 1500
 
 current["dns/file"] = "afgljksdhfglkjsdhf glsjdfgsdfg\nsdfgkjsdfkljg\nsdfgsdg\nsdfgsdfg\n"
 
-
-
+current["interface/pppoe/*0/user-id"] = "lee"
+current["interface/pppoe/*0/attach"] = "eth0"
+current["interface/pppoe/*0/password"] = "hidden"
+current["interface/pppoe/*0/default-route"] = "auto"
+current["interface/pppoe/*0/mtu"] = 1492
 
 
 new = copy_table(current)
@@ -71,12 +74,6 @@ new["interface/ethernet/*1/ip"] = "192.168.95.4/24"
 new["interface/ethernet/*0/ip"] = "192.168.98.44/24"
 new["interface/ethernet/*0/mtu"] = 1492
 --current["interface/ethernet/bill"] = "nope"
-
-new["interface/pppoe/*0/user-id"] = "lee"
-new["interface/pppoe/*0/password"] = "hidden"
-new["interface/pppoe/*0/default-route"] = "auto"
-new["interface/pppoe/*0/mtu"] = 1492
-
 
 new["iptables/*filter/*FORWARD/policy"] = "ACCEPT"
 new["iptables/*filter/*FORWARD/rule/*10"] = "-s 12.3.4 -p [fred] -j ACCEPT"

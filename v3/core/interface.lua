@@ -76,6 +76,45 @@ local function ethernet_commit(changes)
 	return true
 end
 
+--------------------------------------------------------------------------------
+--
+-- pppoe -- we create or remove the pppoe config files as needed, we need to
+--          make sure that the "attach" interface is valid, up, and has no
+--          ip address. (We use a trigger to ensure this)
+--
+--------------------------------------------------------------------------------
+local function pppoe_precommit(changes)
+	for ifnum in each(node_list("interface/pppoe", CF_new)) do
+		local cf = node_vars("interface/pppoe/"..ifnum, CF_new)
+		print("PPPOE Precommit -- node: " .. ifnum)
+
+		--
+		-- TODO: check all the required fields are present for each
+		--       pppoe interface definition
+		--
+
+		--
+		-- Check the interface we are attaching to meets our requirements
+		--
+		if cf.attach then
+			local ifpath = interface_path(cf.attach)
+			if not ifpath then 
+				return false, string.format("attach interface incorrect for pppoe/%s: %s", ifnum, cf.attach)
+			end
+			local ethcf = node_vars(ifpath, CF_new)
+			if not next(ethcf) then 
+				return false, string.format("attach interface unknown for pppoe/%s: %s", ifnum, ifpath)
+			end
+			if ethcf.ip then
+				return false, string.format("attach interface must have no IP address for pppoe/%s: %s", ifnum, ifpath)
+			end
+		else
+			return false, "required interface in attach field"
+		end
+	end
+	return true
+end
+
 
 --
 -- If deleted then remove peer config
@@ -85,6 +124,12 @@ end
 --
 local function pppoe_commit(changes)
 	print("PPPOE")
+	local state = process_changes(changes, "interface/pppoe")
+
+	for trig in each(state.triggers) do
+		print("We were triggered by: "..trig)
+	end
+
 	return true
 end
 
@@ -167,16 +212,19 @@ master["interface/ethernet/*/mtu"] = 		{ ["type"] = "mtu" }
 --master["interface/ethernet/fred"] = { ["type"] = "ipv4" }
 --master["interface/ethernet/bill"] = { ["type"] = "ipv4" }
 
-master["interface/pppoe"] = 				{ ["commit"] = pppoe_commit,
-											  ["depends"] = { "interface/ethernet" },
-											  ["with_children"] = 1 }
+master["interface/pppoe"] = {
+	["commit"] = pppoe_commit,
+	["precommit"] = pppoe_precommit,
+	["depends"] = { "interface/ethernet" },
+	["with_children"] = 1,
+}
+
 master["interface/pppoe/*"] =				{ ["style"] = "pppoe_if" }
 master["interface/pppoe/*/attach"] =		{ ["type"] = "ethernet_if" }
 master["interface/pppoe/*/default-route"] =	{ ["type"] = "OK" }
 master["interface/pppoe/*/mtu"] =			{ ["type"] = "mtu" }
 master["interface/pppoe/*/user-id"] =		{ ["type"] = "OK" }
 master["interface/pppoe/*/password"] =		{ ["type"] = "OK" }
-	
 
-
+add_trigger("interface/ethernet/*", "interface/pppoe/@ethernet_change")
 

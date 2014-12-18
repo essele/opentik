@@ -24,18 +24,18 @@ local function ipt_set_commit(changes)
 	local state = process_changes(changes, "iptables/set")
 
 	for set in each(state.added) do
-		io.write(string.format("# (add set %s)\n", setname))
-		local cf = node_vars("iptables/set/"..set, CF_new)
 		local setname = set:gsub("*", "")
+		local cf = node_vars("iptables/set/"..set, CF_new)
 
+		io.write(string.format("# (add set %s)\n", setname))
 		io.write(string.format("# ipset create %s %s\n", setname, cf["type"]))
 		for item in each(cf.item) do
 			io.write(string.format("# ipset add %s %s\n", setname, item))
 		end
 	end
 	for set in each(state.removed) do
-		io.write(string.format("# (remove set %s)\n", setname))
 		local setname = set:gsub("*", "")
+		io.write(string.format("# (remove set %s)\n", setname))
 		io.write(string.format("# ipset -q destroy %s\n", setname))
 	end
 	for set in each(state.changed) do

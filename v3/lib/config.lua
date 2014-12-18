@@ -101,6 +101,19 @@ function node_exists(prefix, kv)
 end
 
 --
+-- See if a node exists in the kv but using a master based
+-- search, looking for non-master records
+--
+function node_exists_using_master(prefix, kv)
+	prefix = "^" .. prefix:gsub("%*%f[/%z]", "*[^/]+")
+
+	for k,_ in pairs(kv) do
+		if k:match(prefix) then return true end
+	end
+	return false
+end
+
+--
 -- Take a prefix and build a hash of elements and values (using the
 -- defaults it provided in the master config)
 --
@@ -151,6 +164,16 @@ function are_the_same(a, b)
 end
 
 --
+-- Add a trigger to a given node
+--
+function add_trigger(tonode, trigger)
+	assert(master[tonode], "attempt to add trigger to non-existant node: "..tonode)
+	
+	if not master[tonode].trigger then master[tonode].trigger = {} end
+	table.insert(master[tonode].trigger, trigger)
+end
+
+--
 --
 --
 --
@@ -158,31 +181,63 @@ function build_work_list(current, new)
 	local rc = {}
 	local sorted = sorted_keys(new, current)
 
-	while #sorted > 0 do
-		local key = sorted[1]
-
---		if new[key] ~= current[key] then
-		if not are_the_same(new[key], current[key]) then
-			local mkey = find_master_key(key)
-
-			local fkey, origkey = find_master_function(mkey)
-			if fkey then
-				if rc[fkey] == nil then rc[fkey] = {} end
-				add_to_list(rc[fkey], remove_prefixed(sorted, origkey))
-				--
-				-- TODO Don't do the remove_prefixed perhaps we have
-				-- TODO to process each line so we remove ones that
-				-- TODO are the same ... but probably do it here so
-				-- TODO that we don't keep doing find_master_function
-				--
-			else
-				-- TODO: what do we do here??
-				print("No function found for " .. key)
-			end
+	-- run through removing any that are the same in both
+	-- us are_the_same to compare sub-tables as well
+	local i = 1
+	while sorted[i] do
+		if are_the_same(new[sorted[i]], current[sorted[i]]) then
+			table.remove(sorted, i)
 		else
-			table.remove(sorted, 1)
+			i = i + 1
 		end
 	end
+
+	-- for each trigger source, check if it is in the change list
+	-- and if it is we then check to see if the destination has
+	-- any config and add the triggers if it has
+	local changehash = values_to_keys(sorted)
+	local additions = {}
+	for kp, value in pairs(master) do
+		if value.trigger then
+			print("Looking for "..kp.." in changes")
+			if node_exists_using_master(kp, changehash) then
+				for trig in each(value.trigger) do
+					print("Found trigger in ["..kp.."] --> " .. trig)
+					-- check if we have any new config for this func since
+					-- we don't want to trigger if we have nothing
+					local fkey, origkey = find_master_function(trig)
+					print("Master function is ["..fkey.."] ["..origkey.."]")
+					if node_exists_using_master(origkey, CF_new) then
+						print("Config exists, so adding trigger")
+						additions[trig] = 1
+					end
+				end
+			end
+		end
+	end
+	for k,_ in pairs(additions) do
+		print("Adding: "..k)
+	end
+	add_to_list(sorted, keys_to_values(additions))
+	changehash = nil
+
+
+
+	-- now work out the real change categories
+	while #sorted > 0 do
+		local key = sorted[1]
+		local mkey = find_master_key(key)
+		local fkey, origkey = find_master_function(mkey)
+
+		if fkey then
+			if rc[fkey] == nil then rc[fkey] = {} end
+			add_to_list(rc[fkey], remove_prefixed(sorted, origkey))
+		else
+			-- TODO: what do we do here??
+			print("No function found for " .. key)
+		end
+	end
+
 	return rc
 end
 
@@ -196,17 +251,15 @@ end
 -- limit the processing to wildcard entries
 --
 function process_changes(changes, keypath, wc)
-	local rc = { ["added"] = {}, ["removed"]= {}, ["changed"] = {} }
+	local rc = { ["added"] = {}, ["removed"]= {}, ["changed"] = {}, ["triggers"] = {} }
 
 	for item in each(node_list(keypath, changes, wc)) do
 
---		local in_old = node_exists(keypath.."/"..item, CF_current)
---		local in_new = node_exists(keypath.."/"..item, CF_new)
 		v_old = CF_current[keypath.."/"..item]
 		v_new = CF_current[keypath.."/"..item]
 
-		if v_old and v_new then 
-			if v_old ~= v_new then table.insert(rc["changed"], item) end
+		if not v_old and not v_new then table.insert(rc["triggers"], item)
+		elseif v_old and v_new then table.insert(rc["changed"], item)
 		elseif v_old then table.insert(rc["removed"], item)
 		else table.insert(rc["added"], item) end
 	end
