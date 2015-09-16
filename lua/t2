@@ -1,0 +1,26 @@
+#!./luajit
+
+t = {}
+u = {}
+
+local function set_meta(tab, v)
+	print("Setting v is "..v)	
+	setmetatable(tab, { __index = function(tt,kk)
+		print("Get meta for key="..kk)
+		print("v is "..tostring(v))
+		return 30
+	end
+	})
+end
+
+set_meta(t, "bah")
+set_meta(u, "bonh")
+
+x = t["hell"]
+
+print("x = "..tostring(x))
+
+
+y = u["bhghghg"]
+print("y = "..tostring(y))
+

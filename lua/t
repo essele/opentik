@@ -1,0 +1,21 @@
+#!/usr/bin/lua
+
+package.cpath = "./c/?.so;" .. package.cpath
+
+x = require("lee")
+
+
+
+function test_func(a)
+	print("Called Test Func")
+	print("a="..tostring(a))
+	print("a fred="..tostring(a.fred))
+	print("a joe="..tostring(a.joe))
+end
+
+
+x.dummy()
+
+
+x.add_cache("route/link", test_func)
+

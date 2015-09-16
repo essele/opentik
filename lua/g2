@@ -1,0 +1,582 @@
+#!./luajit
+
+--
+-- Random numbers, not for security so the seed isn't critical
+--
+math.randomseed(os.time())
+
+
+--
+--
+--
+CONFIG = {}
+
+CONFIG["/interface"] = {
+	["cf"] = {},
+	["live"] = {},
+}
+
+CONFIG["/interface/ethernet"] = {
+	["cf"] = {
+	},
+
+	["dependents"] = {
+	},
+
+	["fields"] = {
+		["name"] = { uniq = true, default="" },
+		["default-name"] = { readonly = true, default="" },
+		["disabled"] = { default=false },
+		["mtu"] = { restart = true, default = 87654 },
+		["type"] = { readonly = true, default = "ether" },
+	},
+
+	["options"] = {
+		["duplicate"] = "/interface",
+	},
+
+	["live"] = {
+	},
+}
+
+--
+-- We differ from the mikrotik approach here, we will just look for the highest numbered
+-- interface with the given prefix and go one bigger.
+--
+local function build_uniq_name(path, prefix) 
+	local base = CONFIG[path]
+	local regex = prefix:gsub("[%-%+]", "%%%1") .. "(%d+)"		 -- TODO: more regex?
+	local i = 0
+	local num
+
+	for k,_ in pairs(CONFIG[path].cf) do
+		local num = k:match(regex)
+		if num and tonumber(num) > i then i = tonumber(num) end
+	end
+	i = i + 1
+	return prefix .. i
+end
+
+CONFIG["/interface/ipip"] = {
+	["cf"] = {},
+	["dependents"] = {},
+	["options"] = { ["duplicate"] = "/interface" },
+	["live"] = {},
+	["fields"] = {
+		["name"] = { uniq = function() return build_uniq_name("/interface", "ipip-tunnel") end },
+		["local-address"] = { default = "" },
+		["remote-address"] = { default = "" },
+		["mtu"] = { default = "auto" },
+		["actual-mtu"] = { readonly = true },
+		["keepalive"] = { default = "10s,10" },
+		["type"] = { readonly = true, default = "ipip" },
+	},
+}
+
+--
+-- The defaults metatable is used to gather default values for given fields by looking
+-- within the fields, we keep the path and ci as local variables so we can use them if
+-- we are doing function lookups
+--
+function set_defaults_metatable(path, ci)
+	setmetatable(ci, { __index=function(t, k)
+		--
+		-- We only return defaults for defined fields
+		--
+		if not CONFIG[path].fields[k] then return nil end
+
+		local default = CONFIG[path].fields[k].default
+		if type(default) == "function" then
+			return default(path, ci)
+		else
+			return default
+		end
+	end
+	})
+end
+
+--
+-- Call the _dependency_list function for a given item if the function
+-- exists
+--
+local function dependency_list(path, ci, uniq)
+	local deps = CONFIG[path].dependencies
+	local rc = {}
+
+	if type(deps) == "table" then
+		for field, dpath in pairs(deps) do
+			print("DEPLIST field="..field.." dpath="..dpath)
+			local duniq = ci[field]
+			print("Field values="..tostring(duniq))
+			rc[field] = { path=dpath, uniq=duniq }
+		end
+		return rc
+	elseif type(deps) == "function" then
+		return deps(path, ci, uniq)
+	else
+		return {}
+	end
+end
+
+--
+-- Dependency change tells a dependant that the parent has changed (or gone)
+-- so it should update the relevant field(s) to reflect the change
+--
+-- TODO: may want to support a function here for special cases
+--
+local function dependency_change(path, uniq, field, dpath, dolduniq, dnewuniq)
+	dnewuniq = dnewuniq or "unknown"
+
+	print(string.format("DEPEND CHANGE FOR %s %s -> %s", dpath, dolduniq, dnewuniq))	
+	print(string.format("IMPACTING %s %s %s", path, uniq, field))
+	CONFIG[path].cf[uniq][field] = dnewuniq
+end
+
+
+CONFIG["/interface/pppoe"] = {
+	["cf"] = {
+	},
+
+	["dependents"] = {
+	},
+
+	["fields"] = {
+		["name"] = { uniq = true, default="" },
+		["default-name"] = { readonly = true, default="" },
+		["interface"] = { default="" },
+		["disabled"] = { default=false },
+		["mtu"] = { default=false },
+		["type"] = { readonly = true, default = "pppoe-out" },
+	},
+
+	["options"] = {
+		["duplicate"] = "/interface",
+	},
+
+	--
+	-- Dependencies can either be a table or a function.
+	--
+	["dependencies"] = { ["interface"] = "/interface/ethernet" },
+	
+	["live"] = {
+	},
+}
+
+
+CONFIG["/ip/route"] = {
+	["cf"] = {
+	},
+
+	["fields"] = {
+		["dst-address"] = { default = "0.0.0.0/0" },
+		["pref-src"] = { default = "" },
+		["gateway"] = { default = "" },
+		["disabled"] = { default = false },
+	},
+
+	["options"] = {},
+
+	["live"] = {
+	},
+}
+
+
+--
+-- Dump a table for debugging
+--
+local function dump(t, indent)
+	indent = indent or 0
+	local space = string.rep(" ", indent)
+	local rc = ""
+
+	if type(t) == "table" then
+		rc = rc .. "{\n"
+		for k,v in pairs(t) do
+			rc = rc .. space .. "   " .. k .. " = " .. dump(v, indent+3) .. "\n"
+		end
+		rc = rc .. space .. "}"
+	else
+		rc = tostring(t)
+	end
+	return rc
+end
+
+
+
+--
+-- Return a copy of the thing (mostly used for tables)
+-- NOTE: currently does not copy keys that are tables
+--
+local function copy_of(i)
+	if type(i) == "table" then
+		local rc = {}
+		for k,v in pairs(i) do rc[k] = copy_of(v) end
+		return rc
+	else
+		return i
+	end
+end
+
+--
+-- Generate a random key that isn't already in the table, optionally
+-- with a specific prefix
+--
+local function random_key(t, prefix)
+	local k
+
+	local function randomstring(x)
+		local rs = {}
+		for i=1, x do rs[i] = string.char(string.byte('a') + math.random(0,25)) end
+		return table.concat(rs)
+	end
+
+	repeat k = (prefix or "") .. randomstring(8) until not t[k]
+	return k
+end
+
+--
+-- Add a dependent to the dependency list
+--
+local function add_dependent(ppath, puniq, cpath, cuniq, cfield)
+	local pbase = CONFIG[ppath].dependents
+
+	if not pbase[puniq] then pbase[puniq] = {} end
+	table.insert(pbase[puniq], { path = cpath, uniq = cuniq, field = cfield })
+end
+
+--
+-- Remove a dependent from the dependecy list
+--
+local function remove_dependent(ppath, puniq, cpath, cuniq, cfield)
+	local pbase = CONFIG[ppath].dependents[puniq] or {}
+	local i = 1
+	while pbase[i] do
+		if pbase[i].path == cpath and pbase[i].uniq == cuniq and pbase[i].field == cfield then
+			table.remove(pbase, i)
+		else
+			i = i + 1
+		end
+	end
+end
+
+--
+-- See if all the dependencies are dependable
+--
+local function all_dependable(path, ci, uniq)
+	local rc = true
+
+	for _,dep in ipairs(dependency_list(path, ci, uniq)) do
+		local base = CONFIG[dep.path]
+		local live = base and base.live[dep.uniq]
+
+		if not live or not live._dependable then rc = false end
+	end
+	return rc
+end
+
+--
+-- Call the _build_uniq function for a given item
+--
+local function build_uniq(path, ci)
+	local base = CONFIG[path]
+	--
+	-- See if we have a field with uniq set.
+	--
+	-- If set to true, then we use the field
+	-- If it's a function, then we call the function
+	--
+	local uniq = nil
+	for k,field in pairs(base.fields) do
+		if field.uniq then
+			-- If we have a value set, then use it regardless
+			if ci[k] then return ci[k] end
+			-- If uniq=<function> then call it
+			if type(field.uniq) == "function" then return field.uniq() end
+		end
+	end
+	print("NO UNIQ FOUND for "..path)
+	-- TODO: random string
+end
+
+--
+-- See if an item exists
+--
+local function exists(path, uniq)
+	return CONFIG[path].live[uniq] and true
+end
+
+--
+-- Remove keys where the value is the same as the default
+--
+local function prune_defaults(path, ci)
+	for field,value in pairs(ci) do
+		print("Prun check f="..field.." v="..tostring(value))
+		if value == CONFIG[path].fields[field].default then ci[field] = nil end
+	end
+end
+
+--
+-- States:
+--
+-- invalid = one or mode dependencies are not dependable
+-- disabled = we are configured to be disabled (removes invalid)
+-- running = an extra flag for relevant state
+--
+-- dependable = not disabled and then either (not invalid) or (running)
+--
+-- if it's not disabled and not invalid then the back-end should be up, this
+-- will be set by this routine (backed) so we can compare history
+--
+
+
+
+local function state_change(path, uniq, going)
+	local base = CONFIG[path]
+	local live = base.live[uniq]
+	local invalid = going or nil
+
+
+	local backed = live._backed
+
+
+	if not live.disabled then
+		--
+		-- Check our dependencies are valid
+		--
+		if not all_dependable(path, base.cf[uniq], uniq) then invalid = true end
+	end
+
+	--
+	-- If we weren't backed, but now need to be then we need to start the backend
+	--
+	if not backed and not live.disabled and not invalid then
+		-- START
+		print("Would start backend for "..path.." "..uniq)
+		live._backed = true
+	end
+
+	--
+	-- What is our new dependable state?
+	--
+	local dependable = not live.disabled and not invalid
+	-- TODO include optional running state
+
+	-- Ensure our invalid flag is correct
+	live._invalid = invalid
+
+	--
+	-- If we have changed state then tell our depedents
+	--
+	if dependable ~= live._dependable then
+		live._dependable = dependable or nil
+
+		for _,dep in ipairs(base.dependents[uniq] or {}) do
+--			if going then dependency_gone(dep.path, dep.uniq, path, uniq) end
+			if going then dependency_change(dep.path, dep.uniq, dep.field, path, uniq, nil) end
+			state_change(dep.path, dep.uniq)
+		end
+	end
+
+	--
+	-- If we were backed, but now we are not, then we need to stop
+	--
+	if backed and (live.disabled or invalid) then
+		-- STOP
+		print("Would stop backend for "..path.." "..uniq)
+		live._backed = false
+	end
+end
+
+
+
+--
+-- Set specific configuration fields. 
+--
+-- Since changes could chage the dependencies we remove them before the change
+-- then add them back afterwards.
+--
+-- Before we do anything we should check the new dependencies to ensure they are
+-- valid, otherwise we can reject the change.
+--
+--
+--
+local function set_cf(path, olduniq, items)
+	local base = CONFIG[path]
+	local defaults = base.defaults
+	local fields = base.fields
+	local oldci = olduniq and base.cf[olduniq]
+	local mustrecreate = false
+	local newuniq = nil
+	local ci = nil
+
+	-- If we have some items then we need to build a representation of how
+	-- the new cf will look, we copy the old one first if provided, then
+	-- create the new uniq value and check all the dependencies are valid
+	if items then
+		ci = (oldci and copy_of(oldci)) or {}
+		set_defaults_metatable(path, ci)
+
+		for field,value in pairs(items) do ci[field] = value end
+		prune_defaults(path, ci)
+
+		-- We should check all of the dependencies to make sure they exist
+		-- at this point (dependable checks will be later)
+		newuniq = build_uniq(path, ci)
+		for _,dep in pairs(dependency_list(path, ci, newuniq)) do
+			if not exists(dep.path, dep.uniq) then
+				print("Dependency not present: "..dep.path.." "..dep.uniq)
+				return false
+			end
+		end
+	end
+
+	--
+	-- Regardless of what we are doing we need to remove any existing registered
+	-- dependencies since they might change (we will add them back later if needed)
+	--
+	if oldci then
+		--
+		-- Remove our dependency registrations
+		--
+		for field,dep in pairs(dependency_list(path, oldci, olduniq)) do 
+			remove_dependent(dep.path, dep.uniq, path, olduniq, field) 
+		end
+
+		--
+		-- If we are removing it completely then we can take it down and remove
+		--
+		if not ci then
+			state_change(path, olduniq, true)
+			base.cf[olduniq] = nil
+			base.live[olduniq] = nil
+			base.dependents[olduniq] = nil
+		end
+
+		--
+		-- Else .. if it's a major change then we need to take it down here
+		--
+		-- ?? Mark invalid somehow?
+
+
+		--
+		-- Remove the old config ... it will be replaced below if needed
+		-- TODO: duplicate of above, remove from there?
+		base.cf[olduniq] = nil
+	end
+
+
+	--
+	-- Now we can put in the new
+	--
+	if ci then
+		local dependencies = dependency_list(path, ci, newuniq)
+
+		--
+		-- Ensure we move stuff across, caters for change of uniq, including updating any
+		-- dependents
+		--
+		base.cf[newuniq] = ci
+		base.live[newuniq] = base.live[olduniq] or {}
+		base.dependents[newuniq] = base.dependents[olduniq] or {}
+		setmetatable(base.live[newuniq], { __index = ci })
+
+		if olduniq and olduniq ~= newuniq then
+			base.live[olduniq] = nil
+			base.dependents[olduniq] = nil
+
+			for _,dep in ipairs(base.dependents[newuniq] or {}) do
+				dependency_change(dep.path, dep.uniq, dep.field, path, olduniq, newuniq)
+			end
+		end
+
+		--
+		-- Call the function to handle the field changes, if the item is not backed this doesn't do
+		-- anything (since it will all happen at start). If the item is backed then these are minor
+		-- changes that can be done on the fly.
+		--
+		-- TODO: include check for _backed
+		if oldci then
+			local changed = {}
+			for k,v in pairs(oldci or {}) do changed[k] = (oldci[k] ~= ci[k]) or nil end
+			for k,v in pairs(ci or {}) do changed[k] = (ci[k] ~= oldci[k]) or nil end
+			print("CHANGED: ")
+			print(dump(changed))
+		end
+
+		--
+		-- Install our dependencies
+		--
+		for field,dep in pairs(dependencies) do 
+			add_dependent(dep.path, dep.uniq, path, newuniq, field) 
+		end
+
+		--
+		-- Call state change to action any changes
+		--
+		state_change(path, newuniq)
+	end	
+
+	--
+	-- Honour the options.duplicate setting for both olduniq and newuniq
+	--
+	if base.options.duplicate then
+		local duppath = base.options.duplicate
+
+		if olduniq then	
+			CONFIG[duppath].cf[olduniq] = base.cf[olduniq]
+			CONFIG[duppath].live[olduniq] = base.live[olduniq]
+		end
+		if newuniq then
+			CONFIG[duppath].cf[newuniq] = base.cf[newuniq]
+			CONFIG[duppath].live[newuniq] = base.live[newuniq]
+		end
+	end
+end
+
+
+
+
+set_cf("/interface/ethernet", nil, { ["name"] = "ether1", ["default-name"] = "eth0", ["mtu"] = 87654 })
+print(dump(CONFIG))
+set_cf("/interface/pppoe", nil, { ["name"] = "internet", ["default-name"] = "pppoe0", ["interface"] = "ether1" })
+print("---------------------")
+print(dump(CONFIG))
+--set_cf("/interface/ethernet", "eth0", { ["mtu"] = 1800, ["fred"] = 45 } )
+--os.exit(0)
+--set_cf("/interface/ethernet", "ether1", { ["name"] = "banana0" } )
+--set_cf("/interface/ethernet", "banana0", { ["name"] = "banaXna0" } )
+set_cf("/interface/ipip", nil, { ["mtu"] = 12345 } )
+print("---------------------")
+print(dump(CONFIG))
+
+for k,v in pairs(CONFIG["/interface"].cf) do
+	print("k="..k.." type="..tostring(v["type"]))
+end
+
+
+os.exit(0)
+
+
+-- Add item
+set_cf("/ip/route", nil, { ["dst-address"] = "1.2.3.0/24" })
+print(dump(CONFIG))
+print("---------------------")
+set_cf("/ip/route", { ["dst-address"] = "1.2.3.0/24" }, { ["dst-address"] = "2.2.2.2/24", ["pref-src"] = "bill" } )
+print(dump(CONFIG))
+print("---------------------")
+set_cf("/ip/route", nil, { ["dst-address"] = "1.2.3.0/24" })
+print(dump(CONFIG))
+print("---------------------")
+
+
+
+--add_live("/ip/route", { ["dst-address"] = "1.2.3.0/24", ["pref-src"] = "fred" })
+--print(dump(CONFIG))
+--del_live("/ip/route", "1.2.3.0/24")
+--print("---------------------")
+--print(dump(CONFIG))
+
+
+
+
+
