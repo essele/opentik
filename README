@@ -3,6 +3,13 @@ This is going to become an open version of something similar to the MikroTik Rou
 
 It's likely to be based on the OpenWRT builds with a different interface and mechanisms for configuring the system.
 
-
 It's really early days ... I'm just tinkering at the moment
+
+
+Update: September 2015
+
+- Reworked to use buildroot as the base build
+- Including qemu to enable easy simulation and testing
+- Starting on a Lua based system to closely mirror Mikrotik's interface
+- So far have basic config system working (no actions yet!)
 

@@ -11,7 +11,7 @@ local function route_dependencies(path, ci)
 end
 
 
-register("/ip/route", {
+lib.cf.register("/ip/route", {
 	["fields"] = {
 		["dst-address"] = { default = "0.0.0.0/0" },
 		["routing-mark"] = { default = "main" },

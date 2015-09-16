@@ -23,7 +23,7 @@ end
 --
 --
 --
-register("/interface/ethernet", {
+lib.cf.register("/interface/ethernet", {
 	["fields"] = {
 		["name"] = { 
 			uniq = true, 
@@ -70,8 +70,8 @@ register("/interface/ethernet", {
 --
 -- Pre-init the ethernet interfaces
 --
-set_cf("/interface/ethernet", nil, { ["name"] = "ether1", _system_name = "eth0", _orig_name = "ether1" })
-set_cf("/interface/ethernet", nil, { ["name"] = "ether2", _system_name = "eth1", _orig_name = "ether2" })
-set_cf("/interface/ethernet", nil, { ["name"] = "ether3", _system_name = "eth2", _orig_name = "ether3" })
+lib.cf.set("/interface/ethernet", nil, { ["name"] = "ether1", _system_name = "eth0", _orig_name = "ether1" })
+lib.cf.set("/interface/ethernet", nil, { ["name"] = "ether2", _system_name = "eth1", _orig_name = "ether2" })
+lib.cf.set("/interface/ethernet", nil, { ["name"] = "ether3", _system_name = "eth2", _orig_name = "ether3" })
 
 

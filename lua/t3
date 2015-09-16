@@ -1,0 +1,12 @@
+#!../support/bin/lua
+
+package.path = "./lib/?.lua;" .. package.path
+
+--
+---- Use our library autoloading mechanism
+----
+dofile("lib/lib.lua")
+
+
+lib.x.hello()
+

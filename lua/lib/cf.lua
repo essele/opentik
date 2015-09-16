@@ -1,16 +1,3 @@
-#!/usr/bin/lua
-
-package.path = "./lib/?.lua;" .. package.path
-
---
--- Use our library autoloading mechanism
---
-dofile("lib/lib.lua")
-
-
-
-local no = false
-local yes = true
 
 
 --
@@ -45,18 +32,6 @@ local yes = true
 -- For ethernet we use default-name since the kernel will remain
 -- on default
 --
-
-CONFIG = {
-	["/interface"] = {
-		cf = {},
-		live = {},
-	},
-};
-
---
--- Random numbers, not for security so the seed isn't critical
---
-math.randomseed(os.time())
 
 
 --
@@ -141,7 +116,7 @@ end
 --
 -- Dump a table for debugging
 --
-local function dump(t, indent)
+local function cf_dump(t, indent)
 	indent = indent or 0
 	local space = string.rep(" ", indent)
 	local rc = ""
@@ -149,7 +124,7 @@ local function dump(t, indent)
 	if type(t) == "table" then
 		rc = rc .. "{\n"
 		for k,v in pairs(t) do
-			rc = rc .. space .. "   " .. k .. " = " .. dump(v, indent+3) .. "\n"
+			rc = rc .. space .. "   " .. k .. " = " .. cf_dump(v, indent+3) .. "\n"
 		end
 		rc = rc .. space .. "}"
 	else
@@ -356,7 +331,7 @@ end
 --
 --
 --
-local function set_cf(path, olduniq, items)
+local function cf_set(path, olduniq, items)
 	local base = CONFIG[path]
 	local oldci = olduniq and base.cf[olduniq]
 	local newuniq = nil
@@ -462,7 +437,7 @@ local function set_cf(path, olduniq, items)
 			for k,v in pairs(oldci or {}) do changed[k] = (oldci[k] ~= ci[k]) or nil end
 			for k,v in pairs(ci or {}) do changed[k] = (ci[k] ~= oldci[k]) or nil end
 			print("CHANGED: ")
-			print(dump(changed))
+			print(lib.cf.dump(changed))
 		end
 
 		--
@@ -508,7 +483,7 @@ end
 -- to the global config and then ensures that the relevant tables are setup to 
 -- save a load of checking in the code.
 --
-local function register(path, config)
+local function cf_register(path, config)
 	CONFIG[path] = config;
 
 	config.cf = {}
@@ -591,69 +566,12 @@ local function cf_print(path)
 	end
 end
 
-
-
-dofile("route.lua")
---dofile("address.lua")
-dofile("ethernet.lua")
-
---
--- Pre-init the ethernet interfaces
---
-
-
---set_cf("/interface/ethernet", "ether1", { ["name"] = "fred1", ["mtu"] = 87654 })
---set_cf("/interface/ethernet", "fred1", { ["name"] = "ether1" })
-lib.cf.set("/interface/ethernet", "ether2", { ["name"] = "internet0", ["disabled"] = true })
---set_cf("/interface/ethernet", "ether1", { ["_slave"] = true, ["_running"] = true, ["disabled"] = true })
-print(lib.cf.dump(CONFIG))
-lib.cf.print("/interface/ethernet")
-os.exit(0)
-
-set_cf("/ip/route", nil, { ["dst-address"] = "192.168.95.0/24" })
-print(dump(CONFIG))
-
-set_cf("/ip/route", "192.168.95.0/24|main|unicast|30", { ["dst-address"] = "192.168.100.0/24" })
-print(dump(CONFIG))
-
-os.exit(0)
-set_cf("/interface/pppoe", nil, { ["name"] = "internet", ["default-name"] = "pppoe0", ["interface"] = "ether1" })
-print("---------------------")
-print(dump(CONFIG))
---set_cf("/interface/ethernet", "eth0", { ["mtu"] = 1800, ["fred"] = 45 } )
---os.exit(0)
---set_cf("/interface/ethernet", "ether1", { ["name"] = "banana0" } )
---set_cf("/interface/ethernet", "banana0", { ["name"] = "banaXna0" } )
-set_cf("/interface/ipip", nil, { ["mtu"] = 12345 } )
-print("---------------------")
-print(dump(CONFIG))
-
-for k,v in pairs(CONFIG["/interface"].cf) do
-	print("k="..k.." type="..tostring(v["type"]))
-end
-
-
-os.exit(0)
-
-
--- Add item
-set_cf("/ip/route", nil, { ["dst-address"] = "1.2.3.0/24" })
-print(dump(CONFIG))
-print("---------------------")
-set_cf("/ip/route", { ["dst-address"] = "1.2.3.0/24" }, { ["dst-address"] = "2.2.2.2/24", ["pref-src"] = "bill" } )
-print(dump(CONFIG))
-print("---------------------")
-set_cf("/ip/route", nil, { ["dst-address"] = "1.2.3.0/24" })
-print(dump(CONFIG))
-print("---------------------")
-
-
-
---add_live("/ip/route", { ["dst-address"] = "1.2.3.0/24", ["pref-src"] = "fred" })
---print(dump(CONFIG))
---del_live("/ip/route", "1.2.3.0/24")
---print("---------------------")
---print(dump(CONFIG))
+return {
+	set = cf_set,
+	register = cf_register,
+	dump = cf_dump,
+	print = cf_print,
+}
 
 
 
