@@ -46,12 +46,12 @@ local yes = true
 -- on default
 --
 
-CONFIG = {
-	["/interface"] = {
-		cf = {},
-		live = {},
-	},
-};
+--CONFIG = {
+--	["/interface"] = {
+--		cf = {},
+--		live = {},
+--	},
+--};
 
 --
 -- Random numbers, not for security so the seed isn't critical
@@ -593,9 +593,27 @@ end
 
 
 
-dofile("route.lua")
+--
+-- Cause each of the modules in core to be loaded
+--
+local function load_modules(dir)
+	for file in posix.dirent.files(dir) do
+		local mod = file:match("^(.*)%.lua$")
+
+		if mod then
+			_ = core[mod]
+		end
+	end
+	return rc
+end
+
+load_modules("./core")
+
+
+--dofile("route.lua")
 --dofile("address.lua")
-dofile("ethernet.lua")
+--dofile("core/ethernet.lua")
+
 
 --
 -- Pre-init the ethernet interfaces

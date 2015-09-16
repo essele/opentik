@@ -1,6 +1,5 @@
-#!/usr/bin/luajit
 --------------------------------------------------------------------------------
---  This file is part of NetCamel
+--  This file is part of OpenTik
 --  Copyright (C) 2014,15 Lee Essen <lee.essen@nowonline.co.uk>
 --
 --  This program is free software: you can redistribute it and/or modify
@@ -27,30 +26,33 @@
 -- ==============================================================================
 
 local searchlist = {
-	"/netcamel/lib",
-	"./lib"
+	"/netcamel",
+	"."
 }
 
 --
 -- An __index function that allows references to table values to cause the
--- lib to be loaded from the lib directory.
+-- lib to be loaded from the relevant directory.
 --
-local function loader(v, name)
-	local file, filename
+local function set_loader(table, dir)
+	setmetatable(table, { __index = function(v, name)
+		local file, filename
 
-	print("Autoloading module: "..name)
-	for _,p in pairs(searchlist) do
-		filename = p .. "/"..name..".lua"
-		file = io.open(filename, "rb")
-		if file then break end
-	end
-		
-	if file then
-		rawset(v, name, assert(load(assert(file:read("*a")), filename))())
-		return rawget(v, name)
-	else
-		assert(false, "module not found: "..filename)
-	end
+		print("Autoloading module: "..name.." ["..dir.."]")
+		for _,p in pairs(searchlist) do
+			filename = p .. "/" .. dir .. "/"..name..".lua"
+			file = io.open(filename, "rb")
+			if file then break end
+		end
+			
+		if file then
+			rawset(v, name, assert(load(assert(file:read("*a")), filename))() or {})
+			return rawget(v, name)
+		else
+			assert(false, "module not found: "..filename)
+		end
+	end })
+	return table
 end
 
 --
@@ -76,9 +78,15 @@ local function posixloader(v, name)
 	return i
 end
 
-lib = {}
-setmetatable(lib, { __index = loader } )
+--
+-- Setup autoloading for lib and core
+--
+lib = set_loader({}, "lib")
+core = set_loader({}, "core")
 
+--
+-- Setup autoloading for posix
+--
 posix = { __base = "posix" }
 setmetatable(posix, { __index = posixloader } )
 
