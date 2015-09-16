@@ -25,14 +25,11 @@
 *.x86_64
 *.hex
 
-<<<<<<< HEAD
-# Other
-luajit
-=======
-# Specific stuff
-luajit
-mosquitto-1.2.3/client/mosquitto_pub
-mosquitto-1.2.3/client/mosquitto_sub
-mosquitto-1.2.3/src/mosquitto
+# Specific binary, or build related excludes
+support/bin
+support/lua-5.3.1/src/lua
+support/lua-5.3.1/src/luac
+support/qemu-2.2.0/roms/seabios/config.mak
+support/qemu-2.2.0/roms/vgabios/config.mak
+support/qemu-2.2.0/tests/qemu-iotests/common.env
 
->>>>>>> origin/master

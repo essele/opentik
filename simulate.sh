@@ -2,7 +2,7 @@
 #
 #------------------------------------------------------------------------------
 #
-# Starts the qemu emulator with the compiled buildroot for testing new netcamel
+# Starts the qemu emulator with the compiled buildroot for testing new opentik
 # configurations.
 #
 # echo gid gid > /proc/sys/net/ipv4/ping_group_range
@@ -10,7 +10,7 @@
 #------------------------------------------------------------------------------
 
 BUILDROOT=./buildroot
-QEMU=./qemu-system-x86_64
+QEMU=./support/bin/qemu
 QEMU_OPTIONS="-vga none -nographic -parallel none"
 KERNEL=${BUILDROOT}/output/images/vmlinux
 KERNEL=${BUILDROOT}/output/images/bzImage
@@ -21,7 +21,7 @@ BASE_NET="-netdev user,id=main,host=10.1.0.1,net=10.1.0.0/24,dhcpstart=10.1.0.16
 #EXTRA_NET="-device pcnet"
 #BASE_NET="-netdev socket,id=lan,listen=localhost:10234 -device e1000,netdev=lan"
 NO_CLOCK="-rtc base=1970-01-01T12:00:00,clock=vm"
-FS="-fsdev local,id=netcamel,security_model=none,path=./lua -device virtio-9p-pci,fsdev=netcamel,mount_tag=netcamel"
+FS="-fsdev local,id=opentik,security_model=none,path=./lua -device virtio-9p-pci,fsdev=opentik,mount_tag=opentik"
 TAP_NET="-netdev tap,ifname=tap0,script=no,downscript=no,id=tap -device e1000,netdev=tap"
 OTHER_NET="-netdev socket,id=mynet0,listen=:1239 -device e1000,netdev=mynet0 \
 		-netdev socket,id=mynet1,connect=:1239 -device e1000,netdev=mynet1"

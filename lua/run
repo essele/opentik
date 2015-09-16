@@ -1,0 +1,7 @@
+#!/bin/sh
+
+if [ -x ../support/bin/lua ]; then
+	../support/bin/lua go
+else
+	./go
+fi
