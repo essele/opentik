@@ -1,0 +1,162 @@
+#!./luajit
+
+function validate_ipv4(ip)
+	print("In vipv4")
+
+	return true
+end
+
+function validate_hostname(name)
+	print("In hostnamev")
+	return true
+end
+
+function is_unique(table, fieldname, value, exclude)
+	if(not exclude) then exclude = -1 end
+
+	print("Checking unique for "..fieldname.." value is "..value)
+	local i,e
+	for i,e in ipairs(table) do
+		if(i ~= exclude and e[fieldname] == value) then return false end
+	end
+	return true
+end
+
+
+fields = {
+    ["ipv4"] = {    	unique=true,
+                    	validate=validate_ipv4,
+						sanity=function(data) return not data.ipv6 end,
+                    	required=true },
+    ["ipv6"] = {    	unique=true,
+                    	validate=validate_ipv6,
+                    	required=true },
+    ["hostname"] = {	validate=validate_hostname,
+                    	required=true },
+    ["aliases"] = {   	list=true,
+                    	required=false,
+                    	validate_item=validate_hostname }
+    }
+
+
+t={
+	{ ipv4 = "10.2.3.4", hostname="billybos", aliases={"alpha","beta"}}
+}
+
+
+function add(table, data)
+	local k,v
+
+	for k,v in pairs(data) do
+		local field = fields[k]
+		if(not field) then
+			print("unknown field: "..k)
+			return false
+		end
+		if(field.list) then
+			if(type(v) ~= "table") then
+				print("expecting list: "..k)
+				return false
+			end
+			if(field.validate_item) then
+				local i,lv
+				for i,lv in ipairs(v) do
+					if(not field.validate_item(lv)) then
+						print("invalid list field: "..k.." "..lv)
+						return false
+					end
+				end
+			end
+		end
+		if(field.validate) then
+			if(not field.validate(v)) then
+				print("invalid field: "..k.." "..v)
+			end
+		end
+		if(field.unique) then
+			if(not is_unique(table, k, v)) then 
+				print("field is not unique: "..k)
+				return false
+			end
+		end
+		if(field.sanity) then
+			if(not field.sanity(data)) then
+				print("sanity check failed: "..k)
+			end
+		end
+	end
+end
+
+
+add(t, {ipv4="10.5.3.4",hostname="blah",aliases={"alpha","beta","gama"}})
+
+
+m=package.loadlib("c/unit.so", "luaopen_unit")()
+
+
+--[[
+print("Lee="..serialize.serialize("fred"))
+print("US="..serialize.unserialize("\"ab\\\"cd\""))
+print("US="..tostring(serialize.unserialize("{[\"abc\"]=45}")))
+
+t = serialize.unserialize("{[\"abc\"]=45,[\"cde\"]=\"newstring today\",[\"ll\"]={[1]=1,[2]=7,[3]=false}}")
+
+print("u2="..tostring(t))
+
+
+for k,v in pairs(t) do
+	if(type(v) == "table") then
+		for a,b in pairs(v) do
+			print("  k="..a.." v="..tostring(b))
+		end
+	else
+		print("k="..k.." v="..tostring(v))
+	end
+	
+end
+]]--
+
+
+function fred(t, a)
+
+	print("in fred")
+	print("t="..t)
+	print("a="..tostring(a))
+end
+
+m.init("fred")
+
+x={
+	a=45, b="hllo", c=true,
+	d={5,6,4,7}
+}
+
+m.publish("blah/blah", x)
+
+m.subscribe("blah/blah", fred)
+
+
+print("v=" .. tostring(_topic_callbacks["fred/2"]))
+
+function ffmon(file, action) 
+	print("in ffmon")
+	print("file="..file);
+	print("action="..action);
+end
+
+m.monitor_log("/tmp/lxx", ffmon);
+
+x=0;
+while(1) do
+	rc = m.loop();
+	print("Loop - rc="..rc)
+	x = x + 1;
+	if(x==100) then
+		m.unmonitor("/tmp/lxx")
+	end
+end
+
+
+
+
+

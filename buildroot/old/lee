@@ -1,0 +1,72 @@
+#!./luajit
+-- vim:syntax=lua
+
+local ffi = require("ffi")
+local mosquitto = ffi.load("./libmosquitto.so.1")
+
+ffi.cdef[[
+	int mosquitto_lib_init(void);
+	int mosquitto_lib_version(int *major, int *minor, int *revision);
+	struct mosquitto *mosquitto_new(const char *id, bool clean_session, void *obj);
+	int mosquitto_connect(struct mosquitto *mosq, const char *host, int port, int keepalive);
+	int mosquitto_publish(struct mosquitto *mosq, int *mid, const char *topic, int payloadlen, 
+							const void *payload, int qos, bool retain);
+	int mosquitto_subscribe(struct mosquitto *mosq, int *mid, const char *sub, int qos);
+	int mosquitto_loop(struct mosquitto *mosq, int timeout, int max_packets);
+	void mosquitto_message_callback_set(struct mosquitto *mosq,
+			void (*on_message)(struct mosquitto *, void *, const struct mosquitto_message *));
+	struct mosquitto_message{
+		int mid;
+		char *topic;
+		void *payload;
+		int payloadlen;
+		int qos;
+		bool retain;
+	};
+]]
+
+
+function mycallback(m, ud, msg)
+	print("Got a message")
+	print("msg is " .. tostring(msg))
+	print("topic is " .. ffi.string(msg.topic))
+	print("payload is " .. ffi.string(msg.payload, msg.payloadlen))
+end
+
+mosquitto.mosquitto_lib_init()
+
+local a = ffi.new("int[1]",1)
+local b = ffi.new("int[1]",1)
+local c = ffi.new("int[1]",1)
+
+x = mosquitto.mosquitto_lib_version(a, b, c)
+
+print("a = " .. a[0])
+print("b = " .. b[0])
+print("c = " .. c[0])
+
+print("x = " .. x)
+
+m = mosquitto.mosquitto_new("arrggghhh", true, nil)
+
+print("m = " ..tostring(m))
+
+rc = mosquitto.mosquitto_connect(m, "localhost", 1883, 10)
+
+print("conect rc="..rc)
+
+mosquitto.mosquitto_message_callback_set(m, mycallback)
+
+payload="blahlahfhgj"
+rc = mosquitto.mosquitto_publish(m, nil, "lee/fred", #payload, payload, 0, true)
+
+print("publish rc="..rc)
+
+rc = mosquitto.mosquitto_subscribe(m, nil, "lee/fred", 0)
+print("subscribe rc="..rc)
+
+while(1) do
+	rc = mosquitto.mosquitto_loop(m, -1, 100)
+	print("Loop rc="..rc)
+end
+

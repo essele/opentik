@@ -1,0 +1,108 @@
+#!../luajit
+
+--
+-- Create the main interface list and set the name field
+-- as the key field
+--
+List.create("address", "address")
+
+--
+-- Setup the field definitions for the address table
+--
+DEF["address"] = {
+	["fields"] = {
+		["address"]		= { type="ipv4p", required=true, unique=true },
+		["interface"]	= { type="name", nametype="interface", required=true },
+	}
+}
+
+--
+-- Create a new structure containing:
+--
+-- 1. The fields needed to hold and manage the config
+-- 2. The values for the fields
+-- 3. Functions to handle actions on the object
+--
+Address = ListItem:inherit()
+
+function Address:new()
+	local address = {}
+
+	-- Setup object bit...
+	setmetatable(address, self)
+	self.__index = self
+
+	-- Initialise the ListItem...
+	if(not address:init("address", "address")) then return nil end
+
+	return address
+end
+function Address.from_config(config)
+	local address = Address:new()
+	address.scratch = config
+	return address
+end
+
+--
+-- For addresses we are dependent on the interface being
+-- up. So when we build our dependencies we make sure we remove
+-- the old one (if the interface changed) and then set the
+-- dependency.
+--
+function Address:build_depends(old)
+	if(old.interface and old.interface ~= self.config.interface) then
+		self:remove_dependency("/state/interface/"..old.interface)
+	end
+	self:add_dependency("/state/interface/"..self.config.interface, "up")
+end
+
+
+--
+-- SOME THOUGHTS ABOUT ADDRESSES:
+--
+-- Addresses are dependent on the underlying interface being available, so the "create"
+-- routine will check for interface availability, if it's not then we do nothing and wait
+-- for an event notification of interface availability.
+--
+-- We watch: /state/interface/<interface> and keep a state table
+--
+
+--
+-- Create is called whenever the config is considered valid and the item is
+-- enabled, so for us we will apply the address...
+--
+function Address:action_create()
+	print("action_create: ")
+	netlink.addr_add(self.config.address, self.config.interface);
+end
+
+--
+-- Change is called on a live address when we change some config item
+--
+function Address:action_change(old_config)
+	print("action_change")
+end
+
+--
+-- Remove is called when the interface goes invalid or is disabled
+--
+function Address:action_remove()
+	print("action_remove")
+end
+
+
+address = Address:new()
+address:set("address", "10.10.2.2/24")
+address:set("interface", "grelee")
+rc = address:apply()
+
+
+function CB.address.address_new(ip, iface, object)
+	print("NWE ADDRESS: " .. ip)
+end
+
+
+print("Apply returned " .. tostring(rc))
+
+netlink.watch("addr", CB.address.address_new)
+

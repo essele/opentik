@@ -1,0 +1,38 @@
+# Object files
+*.o
+*.ko
+*.obj
+*.elf
+
+# Libraries
+*.lib
+*.a
+
+# Shared objects (inc. Windows DLLs)
+*.dll
+*.so
+*.so.*
+*.dylib
+
+# dependencies
+*.d
+
+# Executables
+*.exe
+*.out
+*.app
+*.i*86
+*.x86_64
+*.hex
+
+<<<<<<< HEAD
+# Other
+luajit
+=======
+# Specific stuff
+luajit
+mosquitto-1.2.3/client/mosquitto_pub
+mosquitto-1.2.3/client/mosquitto_sub
+mosquitto-1.2.3/src/mosquitto
+
+>>>>>>> origin/master

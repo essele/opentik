@@ -1,0 +1,309 @@
+#!./luajit
+
+
+--
+-- Global to store the table definitions...
+--
+tabledef = {}
+T = {}
+
+--
+-- Copy a simple k/v table
+--
+function table_copy(t)
+	local k,v
+	local rc = {}
+	for k,v in pairs(t) do rc[k] = v end
+	return rc
+end
+
+--
+-- Validator for ipv4 addresses and hostnames
+--
+function validate_ipv4(table, field, s)
+	local a,b,c,d = string.match(s, "^(%d+)%.(%d+)%.(%d+).(%d+)$")
+	local err
+
+	if(not a) then return("invalid ipv4 address") end
+	a, b, c, d = tonumber(a), tonumber(b), tonumber(c), tonumber(d)
+		
+	if(a>255 or b>255 or c>255 or d>255 ) then return("invalid ipv4 address") end
+	return nil
+end
+function validate_hostname(table, field, s)
+	local m = string.match(s, "^%w[%w%.]+%w$")
+	if(not m) then return("invalid hostname") end
+	return nil
+end
+
+
+--
+-- Initialise the table ... all we do is store the definitions in the global
+-- tabledef
+--
+function init_table(table, t)
+	rc = {}
+	if(not t.fields or type(t.fields) ~= "table") then error("need a fields key") end
+
+	tabledef[table] = t
+	T[table] = {}
+end
+
+--
+-- Given a table name, a field name and the data work out which validator to use
+--
+function validate_field(table, field, s)
+	f = tabledef[table].fields[field]
+
+	if(f.validate) then 
+		return f.validate(table, field, v) 
+	elseif(_G["validate_"..f.type]) then
+		return _G["validate_"..f.type](table, field, s)
+	else
+		return "no validator"
+	end
+end
+
+--
+-- Validate the record, return a list issues if there are any
+--
+function validate(table, d, exclrow)
+	local i,n,f,k,v
+	local rc = {}
+
+	-- first we validate each field
+	for k,v in pairs(d) do
+		f = tabledef[table].fields[k]
+		if(not f) then 
+			rc[k] = "invalid field" 
+		else
+			if(f.list) then
+				local s, r
+				for _,s in ipairs(v) do
+					r = validate_field(table, k, s)
+					if(r) then
+						rc[k] = r
+						break
+					end
+				end
+			else
+				rc[k] = validate_field(table, k, v)
+			end
+		end
+	end
+
+	-- do we have all the required fields and 
+	-- run uniqueness checks if needed
+	for n,f in pairs(tabledef[table].fields) do
+		if(f.required and not d[n]) then 
+			if(f.default) then
+				if(type(f.default) == "function") then
+					d[n] = f.default(table, n)
+				else
+					d[n] = f.default
+				end
+			else
+				rc[n] = "required"
+			end
+		end
+		if(not rc[n] and d[n] and f.unique) then
+			for i,v in ipairs(T[table]) do
+				if(i ~= exclrow and v[n] == d[n]) then print("match") rc[n] = "not unique" break end
+			end
+		end
+		if(d[n]) then
+			print("Validated "..n.." = "..tostring(d[n]))
+		end
+	end
+
+	-- if we have no errors, then wecan run the table validator 
+	-- if there is one
+	if(not next(rc)) then
+		if(tabledef[table].validator) then
+			return tabledef[table].validator(table, d)
+		else
+			return nil
+		end
+	end
+
+	return rc
+end
+
+--
+-- Find the row where the given key matches...
+--
+function findkey(table, field, value)
+	local i, v
+
+	for i,v in ipairs(T[table]) do
+		if(v[field] == value) then return i end
+	end
+	return nil
+end
+
+--
+-- If we are setting a value, then we pull out the row, make the changes
+-- and then validate the whole row to make sure it works
+--
+function set(table, row, d)
+	local r,k,v,rc
+
+	if(type(row) ~= "number") then
+		if(not tabledef[table].key) then return "invalid row/no key" end
+		row = findkey(table, tabledef[table].key, row)
+		if(not row) then return "unable to find row" end
+	end
+
+	if(not T[table][row]) then return "invalid row" end
+	r = table_copy(T[table][row])
+	for k,v in pairs(d) do
+		r[k] = v
+	end
+
+	rc = validate(table, r, row)
+	if(rc) then return rc end
+	print("VALIDATION WAS OK FOR SET")
+end
+
+--
+-- Standard routine to generate an automatic name based on "gn" field
+-- if it doesn't exist then we use table name
+--
+function gen_name(table, field)
+	local f = tabledef[table].fields[field]
+	local gn = f.gn
+	local i = 0
+	local k,v,regex,m
+	
+	if(not gn) then gn = table end
+
+	regex="^"..gn.."(%d+)$"
+
+	for k,v in ipairs(T[table]) do
+		m = string.match(v[field], regex)
+		if(m) then
+			m = tonumber(m)
+			if(m > i) then i = m end
+		end
+	end	
+	return(gn..(i+1))
+end
+
+
+--
+-- This is the validator that checks the overall record, so we can build logic
+-- in here for things like "either of", or "one of" etc.
+--
+function hosts_validator(table, d)
+	if(d.ipv4 and d.ipv6) then 
+		return { ["ipv4"] = "only one of ipv4 or ipv6",
+				 ["ipv6"] = "only one of ipv4 or ipv6" }
+	end
+	if(not d.ipv4 and not d.ipv6) then
+		return { ["ipv4"] = "one of ipv4 or ipv6 required",
+				 ["ipv6"] = "one of ipv4 or ipv6 required" }
+	end
+	return nil
+end
+
+-- TODO: support the concept of allowing invalid entries, this means the record
+--       is considered invalid and ignored, however the data is recorded so it can
+--       be easily rectified
+
+init_table("hosts",{
+	validator=hosts_validator,								-- checks overall once fields are ok
+	type="list",											-- list or config (1 item only)
+	key="ipv4",												-- field used for key lookups
+	fields={												-- list of fields
+		["ipv4"] = {type="ipv4", unique=true },
+		["ipv6"] = {type="ipv6", unique=true },
+		["hostname"] = { type="hostname", required=true, default="fred" },
+		["aliases"] = { type="hostname", list=true }
+	}
+})
+
+
+init_table("domainsets",{
+	type="list",
+	key="name",
+	fields={
+		["name"] = { type="name", required=true, unique=true, default=gen_name, gn="ds" },
+		["ipset"] = { type="ipset" },
+		["domains"] = { type="domain", list=true }
+	}
+})
+
+init_table("config/dns", {
+	type="config",
+	fields={
+		["dhcp-authoritative"] 				= { type="bool", default=false },
+		["read-ethers"]						= { type="bool", default=false },
+		["port"]							= { type="ipport", default=53 },
+		["server"]							= { type="hostname", list=true },
+		["interface"]						= { type="interface", list=true },
+		["except-interface"]				= { type="interface", list=true }
+	}
+})
+
+
+
+rc = validate("domainsets", {} )
+
+--[[
+
+table_init(name)
+table_validate_add(name, new_entry)
+table_validate_set(name, new_values)
+table_add
+table_set
+table_get
+table_setvalid(name, row, true/false)
+
+
+
+config_init(name)
+config_validate(name, new_values)
+config_set
+config_get
+
+]]--
+
+print(tostring(tabledef["hosts"].fields));
+
+T["hosts"][1] = { hostname="fred", ipv4="10.2.3.4" }
+T["hosts"][2] = { hostname="bill", ipv4="10.2.3.5" }
+
+-- rc = validate("hosts", {hostname="blahs", ipv4="10.2.3.5", aliases={"one", "two", "three"}})
+rc = set("hosts", "10.2.3.5", { aliases = { "bong" }})
+print(tostring(rc))
+
+if(rc) then 
+	for k,v in pairs(rc) do
+			print(k.."="..v)
+	end
+end
+
+function cb(i, n, t) 
+	print("In CB: i="..i.." n="..n.." t="..t)
+end
+
+
+m = package.loadlib("c/unit.so", "luaopen_unit")()
+
+m.init("newnetlink")
+
+m.netlink_link(cb)
+
+for k,v in pairs(nl_links) do
+	print(k..": "..v.name.." ("..v.type.."): "..v.state)
+	for f,_ in pairs(v.flags) do
+		print("Flags: "..f)
+	end
+end
+
+while(1) do
+	rc = m.loop()
+--	print("Loop - rc="..rc)
+end
+
+
