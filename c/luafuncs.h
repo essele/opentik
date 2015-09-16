@@ -1,5 +1,6 @@
 #ifndef _LUAFUNCS_H
 #define _LUAFUNCS_H
+
 /*==============================================================================
  * Helper functions for adding, removing and calling function references
  *==============================================================================
@@ -15,6 +16,5 @@ static inline void get_function(lua_State *L, int id) {
 static inline void free_function(lua_State *L, int id) {
 	luaL_unref(L, LUA_REGISTRYINDEX, id);
 }
-
 
 #endif

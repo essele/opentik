@@ -11,9 +11,18 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 
+#include "unit.h"
 #include "filewatch.h"
 #include "luafuncs.h"
 
+/*
+ * We have a unit_service_desc for the service_loop
+ */
+static struct unit_service_desc     u_svc;
+
+/*
+ * Internal data structure for tracking what we monitor
+ */
 struct filewatch_data {
 	int		id;					// inotify id
 	int		fid;				// function id
@@ -27,15 +36,20 @@ struct filewatch_data {
 	struct	filewatch_data	*next;
 };
 
+/*
+ * Out main list of watches stuff...
+ */
 struct filewatch_data	*watched_paths;
 
+/*
+ * Buffer for reading from inotify
+ */
 char buffer[(sizeof(struct inotify_event)+NAME_MAX+1)*10];
 
 // Early kernels didn't have this...
 #ifndef IN_EXCL_UNLINK
 #define IN_EXCL_UNLINK 0
 #endif
-
 
 /*==============================================================================
  * Some utility functions to find by id, filename, or basename
@@ -106,7 +120,7 @@ static void unlink_child(struct filewatch_data *parent, struct filewatch_data *i
  * Open (or re-open) the given log file...
  *==============================================================================
  */
-int reopen_log(struct filewatch_data *fwdata) {
+static int reopen_log(struct filewatch_data *fwdata) {
 	if(fwdata->log_fd > 0) close(fwdata->log_fd);
 	fwdata->log_fd = open(fwdata->filename, O_RDONLY);
 	return fwdata->log_fd;
@@ -143,15 +157,6 @@ int read_log(lua_State *L, struct filewatch_data *fwdata) {
 	fprintf(stderr, "rc=%d\n", rc);
 	luaL_pushresult(&b);
 	return 1;
-}
-
-
-/*==============================================================================
- * Initialise the file watching mechanism and return a filehandle...
- *==============================================================================
- */
-int filewatch_init(lua_State *L) {
-	return inotify_init();
 }
 
 /*==============================================================================
@@ -336,6 +341,7 @@ int filewatch_read(lua_State *L, int fd) {
 		} else {
 			// This should be a modify event for a file...
 			// TODO: support WRITE_CLOSE...
+			// TODO: logwatch isn't complete yet
 			if(fwdata->fw_type == FW_LOG) {
 				filewatch_log_call(L, fwdata);
 				continue;
@@ -351,4 +357,83 @@ int filewatch_read(lua_State *L, int fd) {
 	return 0;
 }
 
+/*==============================================================================
+ * Add a file to be monitored for changes
+ *==============================================================================
+ */
+static int add_monitor(lua_State *L, int type) {
+	char    *filename = (char *)luaL_checkstring(L, 1);
+	int		fid;
+	int		rc;
+
+	if(!lua_isfunction(L, 2)) return luaL_error(L, "expected function as second argument");
+	lua_pushvalue(L, 2);
+	fid = store_function(L);
+
+	fprintf(stderr, "function reference is %d\n", fid);
+	
+	rc = filewatch_add(L, fid, u_svc.fd, filename, 0, type);
+	fprintf(stderr, "filewatch add rc=%d\n", rc);
+
+	lua_pushnumber(L, 0);
+	return 1;
+}
+static int monitor_log(lua_State *L) {
+	return add_monitor(L, FW_LOG);
+}
+static int monitor_file(lua_State *L) {
+	return add_monitor(L, FW_CHANGE);
+}
+
+static int unmonitor(lua_State *L) {
+	char    *filename = (char *)luaL_checkstring(L, 1);
+	int		rc;
+
+	rc = filewatch_remove(u_svc.fd, filename);
+	fprintf(stderr, "filewatch remove rc=%d\n", rc);
+	if(rc > 0) free_function(L, rc);
+
+	lua_pushnumber(L, 0);
+	return 1;
+}
+
+/*==============================================================================
+* Provide our service data for the unit_service module
+*==============================================================================
+*/
+static int get_service(lua_State *L) {
+	lua_pushlightuserdata(L, (void *)&u_svc);
+	return 1;
+}
+
+/*==============================================================================
+ * These are the functions we export to Lua...
+ *==============================================================================
+ */
+static const struct luaL_reg lib[] = {
+	{"monitor_log", monitor_log},
+	{"monitor_file", monitor_file},
+	{"unmonitor", unmonitor},
+	{"get_service", get_service},
+	{NULL, NULL}
+};
+
+/*------------------------------------------------------------------------------
+ * Main Library Entry Point ... just intialise all the functions
+ *------------------------------------------------------------------------------
+ */
+int luaopen_filewatch(lua_State *L) {
+	// Initialise the module...
+	luaL_openlib(L, "filewatch", lib, 0);
+
+	// Populate the service structure...
+	u_svc.fd = inotify_init();
+	u_svc.read_func = filewatch_read;
+	u_svc.write_func = NULL;
+	u_svc.need_write_func = NULL;
+
+	// And register...
+    register_service(L, &u_svc);
+	return 1;
+}
 

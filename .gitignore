@@ -14,6 +14,9 @@
 *.so.*
 *.dylib
 
+# dependencies
+*.d
+
 # Executables
 *.exe
 *.out
@@ -22,5 +25,14 @@
 *.x86_64
 *.hex
 
+<<<<<<< HEAD
 # Other
 luajit
+=======
+# Specific stuff
+luajit
+mosquitto-1.2.3/client/mosquitto_pub
+mosquitto-1.2.3/client/mosquitto_sub
+mosquitto-1.2.3/src/mosquitto
+
+>>>>>>> origin/master

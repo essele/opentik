@@ -1,0 +1,271 @@
+#!../luajit
+
+
+
+-- TODO: remove
+CB.interface.ether = {}
+CB.interface.loopback = {}
+
+--
+-- Setup the field definitions for the various types of
+-- interfaces
+--
+DEF["interface/ether"] = {
+	["fields"] = {
+		["name"] 		= { type="name", nametype="interface", required=true, unique=true,
+							default=ListItem.namegen, ngprefix="ether" },
+		["type"]		= { type="internal" },
+		["ifindex"]		= { type="internal" },
+		["origif"]		= { type="internal" },
+		["mtu"] 		= { type="number", range="0-8192", default=1500 },
+	}
+
+}
+
+DEF["interface/pppoe"] = {
+	["fields"] = {
+		["name"] 		= { type="name", nametype="interface", fred=45 },
+		["mtu"] 		= { type="number", range="0-65536" }
+	}
+}
+
+
+--
+-- Load any submodules that exist
+--
+--
+--[[
+local sm
+for sm in lfs.dir(".") do
+	if(string.match(sm, "^interface.%a+$")) then
+		print("EXECUTING: "..sm)
+		dofile(sm)
+	end
+end
+]]--
+
+--
+-- Create a new structure containing:
+--
+-- 1. The fields needed to hold and manage the config
+-- 2. The values for the fields
+-- 3. Functions to handle actions on the object
+--
+Interface = ListItem:inherit()
+
+function Interface:new(type)
+	local interface = {}
+	local iftype = "interface/"..type
+
+	-- Setup object bit...
+	setmetatable(interface, self)
+	self.__index = self
+
+	-- Initialise the ListItem...
+	if(not interface:init("interface", iftype)) then return nil end
+
+	-- Setup the internal fieds...
+	interface.config.type = type
+
+	return interface
+end
+function Interface.from_config(config)
+	local interface = Interface:new(config.type)
+	interface.scratch = config
+	return interface
+end
+
+--
+-- The 'set' method simply validates that the values meet the fields requirements
+-- then sets the values in the config area (for later apply)
+--
+function Interface:set(item, value)
+	print("interface.set routing")
+	self.super.set(self, item, value)
+end
+
+--
+-- Create is called whenever the config is considered valid and the item is
+-- enabled, so for us we'll call our type specific code...
+--
+function Interface:action_create()
+	local type = self.config.type
+
+	print("action_create: " .. type)
+	if(CB.interface[type].if_create) then
+		CB.interface[type].if_create(self)
+	end
+	mosquitto.publish("/state/interface/"..self.config.name, "up")
+end
+
+--
+-- Change is called on a live interface when we change some config item,
+-- we'll do this all in our type specific code...
+--
+function Interface:action_change(old_config)
+	print("action_change")
+	if(CB.interface[type].if_change) then
+		CB.interface[type].if_change(self, old_config)
+	end
+end
+
+--
+-- Remove is called when the interface goes invalid or is disabled, so we
+-- call our type specific code here as well
+--
+function Interface:action_remove()
+	print("action_remove")
+	if(CB.interface[type].if_remove) then
+		CB.interface[type].if_remove(self)
+	end
+	mosquitto.publish("/state/interface/"..self.config.name, "gone")
+end
+
+--
+-- Interface callback from Netlink, we will get these at startup as
+-- we interate through the initial list, and then again if things
+-- are added during operation (such as usb ethernet).
+--
+-- There are three things we might want to do here...
+-- 1. Catch any standard rename events (like the initial gre0)
+-- 2. Catch any configured rename events (origif)
+-- 3. Match entry to configuration
+--
+function cb_interface_add(index, name, type, _)
+	local iface
+	print("Interface callback: index="..index.." name="..name.." type="..type)
+	print("Interface type: "..type.." func="..tostring(CB.interface[type].if_pre_add))
+
+	--
+	-- CALLBACK: if_pre_add
+	--
+	if(CB.interface[type].if_pre_add) then
+		local action = CB.interface[type].if_pre_add(index, name)
+		if(action == "ignore") then return end
+	end
+
+	--
+	-- Look for any origif matches so we can action any renames,
+	-- this will only happen once as the interface is really added.
+	--
+	iface = List.findItem("interface", "origif", name)
+	if(iface) then
+		print("Need to rename: "..name.." -> "..iface.config.name)
+
+		-- If we rename we will get a change event so we will
+		-- match config to interface then, so return now
+		return
+	end
+
+
+	for k,v in pairs(nl_links[index]) do
+		print("k="..k.."v="..tostring(v))
+	end
+	
+	local iface = List.findItem("interface", "name", name)
+	if(iface) then 
+		print("Found matching interface record!")
+
+		-- Check if we have problems
+		-- TODO: should we compare stuff here? type, mtu etc.
+
+		-- Set the ifindex for future reference
+		iface.config.ifindex = index;
+
+		-- We go active ... if we weren't then this is an event!
+		iface.active = true;
+
+	else
+		-- We don't have a match ... is this dynamic then?
+		-- For interfaces we don't support dynamic, since everything
+		-- needs to be configured, so we add a config record for
+		-- anything we find and leave it disabled. This will support
+		-- dynamic interfaces (usb etc.)
+		
+	end
+end
+function cb_interface_mod(index, name, type)
+	print("GOT INTERFACE MOD: "..name)
+end
+function cb_interface_del(index, name, type)
+	print("GOT INTERFACE DEL: "..name)
+end
+
+--
+-- Create the main interface list and set the name field
+-- as the key field. We also supply the object type so we
+-- can do a config load
+--
+List.create("interface", "name", Interface)
+
+
+--
+-- Load the unit support library
+--
+--m = package.loadlib("c/unit.so", "luaopen_unit")()
+
+--
+-- TODO: how are we going to rename specific interfaces when they
+--       come up?  For example the tunnel and gre stuff will need
+--       to be renamed if we want to reuse gre0.
+--       Also, if we want to rename eth0..n to ether0..n then we
+--       need to find a consistent way of doing that.
+--
+
+--[[
+interface = Interface:new("gre")
+--interface:set("mtu", 1492)
+interface:set("local", "10.2.0.1")
+interface:set("remote", "10.3.0.1")
+interface:set("name", "grelee")
+
+rc = interface:apply()
+
+interface:add_dependency("/state/interface/eth0", "up")
+
+
+interface = Interface:new("ether")
+interface:set("name", "ether1")
+interface.scratch.origif = "eth0"
+rc = interface:apply()
+
+
+print("Apply returned " .. tostring(rc))
+for k,v in pairs(interface.config) do
+		print("INTERFACEconfig: "..k.."="..v)
+end
+
+for i,j in ipairs(LIST.interface) do
+	print("ITEM "..i)
+	for k,v in pairs(j.config) do
+		print("CONFIG: "..k.."="..v)
+	end
+end
+
+--interface = Interface:new("gre")
+--interface:set("name", "fred")
+
+function cb_addresses()
+end
+function cmd_interface(topic, req)
+	print("Got command request: topic="..topic)
+end
+
+--netlink.watch("addr", cb_addresses, cb_addresses, cb_addresses)
+netlink.watch("link", cb_interface_add, cb_interface_mod, cb_interface_del)
+
+--
+--
+--
+mosquitto.subscribe("/cmd/interface/+", cmd_interface)
+
+]]--
+--[[
+for i,j in ipairs(nl_addrs) do
+	print("Index="..i)
+	for k,v in pairs(j) do
+		print("\tk="..k.." v="..v)
+	end
+end
+]]--
+

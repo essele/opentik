@@ -1,0 +1,104 @@
+-- vim: set syntax=lua ts=4 shiftwidth=4 :
+
+--  
+-- This is a sub-interface module, we just provide specific hooks
+-- for the main interface module
+--
+
+--
+-- Specific field definitions for a GRE type interface
+--
+DEF["interface/gre"] = {
+	["fields"] = {
+		["name"] 		= { type="name", nametype="interface", required=true, unique=true,
+							default=ListItem.namegen, ngprefix="gre" },
+		["type"]		= { type="internal" },
+		["ifindex"]		= { type="internal" },
+		["mtu"] 		= { type="number", range="0-65536", default=1476 },
+		["local"] 		= { type="ipv4", required=true },
+		["remote"] 		= { type="ipv4", required=true }
+	}
+}
+
+--
+-- When we start there are two scenarios ...
+-- 
+-- 1. We are a fresh start and no gre interfaces exist, in which
+--    case we need to probe the gre0 interface and then rename it.
+--
+-- 2. We are a restart and gre stuff already exists. In which
+--    case we don't need to worry about it
+--
+-- We can tell by searching for the gre interface that is non
+-- pointotpoint and checking it's name
+--
+local gre0_renamed = false
+
+--
+-- This is called whenever netlink finds a new gre interface.
+-- 
+-- If we haven't renamed gre0 to __gre then we aren't interested
+-- since we are going to be renaming and we don't care about it.
+--
+-- If we have renamed then it must be a newly created interface
+-- OR one we had hanging around during a restart.
+--
+
+function CB.interface.gre.if_pre_add(index, name)
+	-- We don't care about the non point-to-point interface
+	-- since it's probably gre0 or __gre
+	if(not nl_links[index].flags.pointopoint) then print("IGNORING: "..name) return "ignore" end
+
+	print("IN GRE PRE ADD")
+end
+
+--
+-- If we take a config live where it wasn't valid before then
+-- it is effectively a new interface. 
+--
+-- If we have restarted then it's possible the interface is
+-- still hanging around, but that shouldn't be a problem as
+-- we will match when the interfaces are enumerated.
+--
+function CB.interface.gre.if_create(self)
+	-- If we haven't done the gre0 rename yet then we need to...
+	print("IFCREARE " .. tostring(gre0_renamed))
+	if(not gre0_renamed) then netlink.tunnel_probe_and_rename("gre") gre0_renamed = true end
+
+	-- Create the interface...
+	-- TODO: check the error codes
+	netlink.tunnel_create(self.config.name, "gre", self.config["local"], self.config.remote)
+	netlink.if_set(self.config.name, "mtu", self:get("mtu"))
+	print("MTU="..self:get("mtu"))
+	netlink.if_set(self.config.name, "up")
+end
+
+--
+-- If we go invalid or disabled then we need to remove the
+-- interface (we could just down it, but it's cleaner to
+-- remove, then we remove the risk of name conflicts.)
+--
+function CB.interface.gre.if_remove(self)
+	-- TODO: check the error codes
+	netlink.tunnel_delete(self.config.name)
+end
+
+--
+-- If something changes then we need to do the right thing
+-- for most we can just make the change, if the name changes
+-- then we need to go down, change, then up
+--
+function CB.interface.gre.if_change(self, old)
+	if(self.config.name ~= old.name) then
+		-- TODO: check error codes
+		netlink.if_set(old.name, "down")
+		netlink.if_rename(old.name, self.config.name)
+		netlink.if_set(self.config.name, "up")
+	end
+
+	-- TODO: check error codes
+	CB.interface.gre.if_create(self)
+end
+
+
+

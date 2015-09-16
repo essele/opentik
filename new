@@ -283,3 +283,27 @@ if(rc) then
 	end
 end
 
+function cb(i, n, t) 
+	print("In CB: i="..i.." n="..n.." t="..t)
+end
+
+
+m = package.loadlib("c/unit.so", "luaopen_unit")()
+
+m.init("newnetlink")
+
+m.netlink_link(cb)
+
+for k,v in pairs(nl_links) do
+	print(k..": "..v.name.." ("..v.type.."): "..v.state)
+	for f,_ in pairs(v.flags) do
+		print("Flags: "..f)
+	end
+end
+
+while(1) do
+	rc = m.loop()
+--	print("Loop - rc="..rc)
+end
+
+
