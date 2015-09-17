@@ -17,21 +17,11 @@
 ------------------------------------------------------------------------------
 
 --
--- 
+-- Create the gloal CONFIG table
 --
 CONFIG = {}
 
-
 --
--- 1. INIT - action config and copy over to live
--- 2. LIVE will show as INVALID initially
--- 3. Incoming ADD's .. match to live and un-invalidate
---
--- If adding config...
---	 action and copy to live
---
--- If removing config
---   action, then remove from config, remove ref from live
 --
 
 
@@ -175,6 +165,9 @@ end
 -- Generate a random key that isn't already in the table, optionally
 -- with a specific prefix
 --
+-- Seed once with time ... security isn't important, so this is ok
+math.randomseed(os.time())
+
 local function random_key(t, prefix)
 	local k
 
@@ -249,7 +242,7 @@ local function build_uniq(path, ci)
 		end
 	end
 	print("NO UNIQ FOUND for "..path)
-	-- TODO: random string
+	return random_key(base.live)
 end
 
 --
@@ -260,14 +253,15 @@ local function exists(path, uniq)
 end
 
 --
--- Remove keys where the value is the same as the default
+-- Remove keys where the value is the same as the default, we don't check
+-- anything starting with a '_'.
 --
 local function prune_defaults(path, ci)
 	for field,value in pairs(ci) do
-		if field:sub(1,1) == "_" then goto continue end
-		print("Prun check f="..field.." v="..tostring(value))
-		if value == CONFIG[path].fields[field].default then ci[field] = nil end
-::continue::
+		if field:sub(1,1) ~= "_" then 
+			print("Prun check f="..field.." v="..tostring(value))
+			if value == CONFIG[path].fields[field].default then ci[field] = nil end
+		end
 	end
 end
 
@@ -324,7 +318,6 @@ local function state_change(path, uniq, going)
 		live._dependable = dependable or nil
 
 		for _,dep in ipairs(base.dependents[uniq] or {}) do
---			if going then dependency_gone(dep.path, dep.uniq, path, uniq) end
 			if going then dependency_change(dep.path, dep.uniq, dep.field, path, uniq, nil) end
 			state_change(dep.path, dep.uniq)
 		end

@@ -13,6 +13,8 @@
 *.so
 *.so.*
 *.dylib
+*.la
+*.lo
 
 # dependencies
 *.d
@@ -32,4 +34,16 @@ support/lua-5.3.1/src/luac
 support/qemu-2.2.0/roms/seabios/config.mak
 support/qemu-2.2.0/roms/vgabios/config.mak
 support/qemu-2.2.0/tests/qemu-iotests/common.env
-
+support/luaposix-release-v33.3.1/Makefile
+support/luaposix-release-v33.3.1/build-aux/config.ld
+support/luaposix-release-v33.3.1/config.h
+support/luaposix-release-v33.3.1/config.log
+support/luaposix-release-v33.3.1/config.status
+support/luaposix-release-v33.3.1/ext/posix/.deps/
+support/luaposix-release-v33.3.1/ext/posix/.dirstamp
+support/luaposix-release-v33.3.1/ext/posix/.libs/
+support/luaposix-release-v33.3.1/ext/posix/curses/.deps/
+support/luaposix-release-v33.3.1/ext/posix/sys/.deps/
+support/luaposix-release-v33.3.1/libtool
+support/luaposix-release-v33.3.1/stamp-h1
+#

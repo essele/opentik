@@ -21,14 +21,12 @@
 -- Requiring this library will cause subsequent modules to be loaded on demand
 -- into the lib table.
 --
--- We have our own searchpath (/netcamel/lib and ./lib)
+-- We have our own searchpath (/opentik and .) to support operations on our
+-- host machine or the target
 --
 -- ==============================================================================
 
-local searchlist = {
-	"/netcamel",
-	"."
-}
+local searchlist = { "/opentik", "." }
 
 --
 -- An __index function that allows references to table values to cause the
