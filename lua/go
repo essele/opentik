@@ -34,7 +34,7 @@ load_modules("./core")
 --
 -- Pre-init the ethernet interfaces
 --
-lib.cf.set("/ip/address", nil, { ["address"] = "1.2.3.4/24", ["interface"] = "ether1" })
+local uu = lib.cf.set("/ip/address", nil, { ["address"] = "1.2.3.4/24", ["interface"] = "ether1" })
 
 --lib.cf.set("/interface/ethernet", "ether1", { ["name"] = "internet0", ["disabled"] = true })
 lib.cf.set("/interface/ethernet", "ether1", { ["disabled"] = true })
@@ -47,6 +47,9 @@ lib.cf.print("/ip/address")
 print("---")
 lib.cf.set("/interface/ethernet", "ether1", { ["disabled"] = false })
 lib.cf.print("/ip/address")
+--lib.cf.set("/ip/address", uu, { ["disabled"] = true })
+lib.cf.set("/ip/address", uu, { ["address"] = "5.5.5.6/24", ["disabled"] = false })
+lib.cf.set("/interface/ethernet", "ether1", { ["mtu"] = 1450 })
 
 os.exit(0)
 

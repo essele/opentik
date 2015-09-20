@@ -17,6 +17,25 @@
 ------------------------------------------------------------------------------
 
 
+
+--
+-- Stop address ... just remove the address from the interface
+--
+local function stop_address(path, ci)
+	local dev = core.interface.lookup(ci.interface)
+
+	lib.ip.addr.del(ci.address, dev)
+end
+
+--
+-- Start address ... just add the address to the interface
+--
+local function start_address(path, ci)
+	local dev = core.interface.lookup(ci.interface)
+
+	lib.ip.addr.add(ci.address, dev)
+end
+
 --
 --
 --
@@ -60,6 +79,8 @@ lib.cf.register("/ip/address", {
 
 	["options"] = {
 		["ci-post-process"] = nil,
+		["stop"] = stop_address,
+		["start"] = start_address,
 		["can-delete"] = true,
 		["can-disable"] = true,
 		["field-order"] = { "address", "network", "interface", "actual-interface" }

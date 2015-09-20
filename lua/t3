@@ -1,6 +1,7 @@
 #!../support/bin/lua
 
 package.path = "./lib/?.lua;" .. package.path
+package.cpath = "../support/lib/?.so;" .. package.cpath
 
 --
 ---- Use our library autoloading mechanism
@@ -8,5 +9,5 @@ package.path = "./lib/?.lua;" .. package.path
 dofile("lib/lib.lua")
 
 
-lib.x.hello()
+lib.ip.addr.add("1.2.3.4/24", "eth0")
 

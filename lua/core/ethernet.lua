@@ -38,6 +38,24 @@ end
 
 
 --
+-- Start the interface
+--
+local function ether_start(path, ci)
+	local dev = core.interface.lookup(ci.name)
+
+	lib.ip.link.set(dev, "mtu", ci.mtu, "up")
+end
+
+--
+-- Stop the interface
+--
+local function ether_stop(path, ci)
+	local dev = core.interface.lookup(ci.name)
+
+	lib.ip.link.set(dev, "down")
+end
+
+--
 --
 --
 lib.cf.register("/interface/ethernet", {
@@ -60,7 +78,7 @@ lib.cf.register("/interface/ethernet", {
 		},
 		["mtu"] = { 
 			restart = true, 
-			default = 87654,
+			default = 1500,
 		},
 		["type"] = { 
 			readonly = true, 
@@ -78,6 +96,8 @@ lib.cf.register("/interface/ethernet", {
 	["options"] = {
 		["duplicate"] = "/interface",
 		["ci-post-process"] = core.interface.ci_postprocess,
+		["start"] = ether_start,
+		["stop"] = ether_stop,
 		["can-delete"] = false,			-- can't delete ether interfaces
 		["can-disable"] = true,			-- can disable them though
 		["field-order"] = { "name", "default-name", "disabled", "mtu", "type" }

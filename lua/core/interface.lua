@@ -31,6 +31,17 @@ end
 
 
 --
+-- This is a helper function that anyone can use to lookup the system
+-- interface given the interface name
+--
+local function lookup(name)
+	-- TODO: catch missing items
+	print("LOOKUP for "..name)
+	print("FOUND: "..CONFIG["/interface"].cf[name]._system_name)
+	return CONFIG["/interface"].cf[name]._system_name
+end
+
+--
 --
 --
 lib.cf.register("/interface", {
@@ -76,6 +87,7 @@ lib.cf.register("/interface", {
 })
 
 return {
-	ci_postprocess = ci_postprocess
+	ci_postprocess = ci_postprocess,
+	lookup = lookup
 }
 

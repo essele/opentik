@@ -275,10 +275,10 @@ end
 -- if it's not disabled and not invalid then the back-end should be up, this
 -- will be set by this routine (backed) so we can compare history
 --
-local function state_change(path, uniq, going)
+local function state_change(path, uniq, going, goinvalid)
 	local base = CONFIG[path]
 	local live = base.live[uniq]
-	local invalid = going or nil
+	local invalid = going or goinvalid or nil
 
 
 	local backed = live._backed
@@ -296,6 +296,9 @@ local function state_change(path, uniq, going)
 	if not backed and not live.disabled and not invalid then
 		-- START
 		print("Would start backend for "..path.." "..uniq)
+		if base.options.start then
+			base.options.start(path, base.cf[uniq])
+		end
 		live._backed = true
 	end
 
@@ -327,6 +330,9 @@ local function state_change(path, uniq, going)
 	if backed and (live.disabled or invalid) then
 		-- STOP
 		print("Would stop backend for "..path.." "..uniq)
+		if base.options.stop then
+			base.options.stop(path, base.cf[uniq])
+		end
 		live._backed = false
 	end
 end
@@ -385,9 +391,14 @@ local function cf_set(path, olduniq, items)
 		end
 
 		--
-		-- If we are removing it completely then we can take it down and remove
+		-- We need to shut down to make whatever changes are needed, if we are
+		-- being removed then we handle it differently
 		--
-		if not ci then
+		-- TODO: make the shut down optional if only minor fields are changing
+		--
+		if ci then
+			state_change(path, olduniq, false, true)
+		else
 			state_change(path, olduniq, true)
 
 			--
@@ -403,15 +414,17 @@ local function cf_set(path, olduniq, items)
 		end
 
 		--
-		-- Else .. if it's a major change then we need to take it down here
-		--
-		-- ?? Mark invalid somehow?
-
-
-		--
 		-- Remove the old config ... it will be replaced below if needed
 		-- TODO: duplicate of above, remove from there?
 		base.cf[olduniq] = nil
+
+		--
+		-- Update our mirror if needed
+		--
+		if base.options.duplicate then
+			CONFIG[base.options.duplicate].cf[olduniq] = base.cf[olduniq]
+			CONFIG[base.options.duplicate].live[olduniq] = base.live[olduniq]
+		end
 	end
 
 
@@ -468,26 +481,19 @@ local function cf_set(path, olduniq, items)
 		end
 
 		--
+		-- Honor the options.duplicte setting before calling state_change
+		--
+		if base.options.duplicate then
+			CONFIG[base.options.duplicate].cf[newuniq] = base.cf[newuniq]
+			CONFIG[base.options.duplicate].live[newuniq] = base.live[newuniq]
+		end
+
+		--
 		-- Call state change to action any changes
 		--
 		state_change(path, newuniq)
 	end	
-
-	--
-	-- Honour the options.duplicate setting for both olduniq and newuniq
-	--
-	if base.options.duplicate then
-		local duppath = base.options.duplicate
-
-		if olduniq then	
-			CONFIG[duppath].cf[olduniq] = base.cf[olduniq]
-			CONFIG[duppath].live[olduniq] = base.live[olduniq]
-		end
-		if newuniq then
-			CONFIG[duppath].cf[newuniq] = base.cf[newuniq]
-			CONFIG[duppath].live[newuniq] = base.live[newuniq]
-		end
-	end
+	return newuniq
 end
 
 
