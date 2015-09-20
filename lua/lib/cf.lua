@@ -97,9 +97,7 @@ local function dependency_list(path, ci)
 
 	if type(deps) == "table" then
 		for field, dpath in pairs(deps) do
-			print("DEPLIST field="..field.." dpath="..dpath)
 			local duniq = ci[field]
-			print("Field values="..tostring(duniq))
 			rc[field] = { path=dpath, uniq=duniq }
 		end
 		return rc
@@ -212,7 +210,7 @@ end
 local function all_dependable(path, ci)
 	local rc = true
 
-	for _,dep in ipairs(dependency_list(path, ci)) do
+	for _,dep in pairs(dependency_list(path, ci)) do
 		local base = CONFIG[dep.path]
 		local live = base and base.live[dep.uniq]
 
@@ -285,7 +283,6 @@ local function state_change(path, uniq, going)
 
 	local backed = live._backed
 
-
 	if not live.disabled then
 		--
 		-- Check our dependencies are valid
@@ -319,6 +316,7 @@ local function state_change(path, uniq, going)
 
 		for _,dep in ipairs(base.dependents[uniq] or {}) do
 			if going then dependency_change(dep.path, dep.uniq, dep.field, path, uniq, nil) end
+		print("DEPENTABLE CHANGE for "..path.."/"..uniq.." notifiying "..dep.path.."/"..dep.uniq)
 			state_change(dep.path, dep.uniq)
 		end
 	end
@@ -505,6 +503,11 @@ local function cf_register(path, config)
 	config.live = {}
 	config.dependents = {}
 	config.options = config.options or {}
+
+	-- TODO: some sanity checks to ensure things won't break later
+	--
+	-- 1. Any field in "field-order" actually exists
+	--
 
 	--
 	-- Use a sorted field order if we don't have one

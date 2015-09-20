@@ -23,7 +23,7 @@
 lib.cf.register("/ip/address", {
 	["fields"] = {
 		["address"] = { 
-			default=""
+			default="",
 		},
 		["interface"] = { 	
 			readonly = true, 
@@ -40,11 +40,21 @@ lib.cf.register("/ip/address", {
 			default = "0.0.0.0",
 			prep = false,
 		},
+		["actual-interface"] = {
+			default = "",
+		},
+		["uniq"] = {
+			uniq = function(_, ci) return string.format("%s@%s", ci.address, ci.interface) end,
+		},
+	},
+
+	["dependencies"] = {
+		["interface"] = "/interface/ethernet",
 	},
 	
 	["flags"] = {
 		{ name = "disabled", field = "disabled", flag = "X", pos = 1 },
-		{ name = "invalid", field = "_invliad", flag = "I", pos = 1 },
+		{ name = "invalid", field = "_invalid", flag = "I", pos = 1 },
 		{ name = "dynamic", field = "_dynamic", flag = "D", pos = 1 },
 	},
 

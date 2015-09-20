@@ -36,12 +36,18 @@ load_modules("./core")
 --
 lib.cf.set("/ip/address", nil, { ["address"] = "1.2.3.4/24", ["interface"] = "ether1" })
 
---set_cf("/interface/ethernet", "ether1", { ["name"] = "fred1", ["mtu"] = 87654 })
---set_cf("/interface/ethernet", "fred1", { ["name"] = "ether1" })
-lib.cf.set("/interface/ethernet", "ether2", { ["name"] = "internet0", ["disabled"] = true })
+--lib.cf.set("/interface/ethernet", "ether1", { ["name"] = "internet0", ["disabled"] = true })
+lib.cf.set("/interface/ethernet", "ether1", { ["disabled"] = true })
 --set_cf("/interface/ethernet", "ether1", { ["_slave"] = true, ["_running"] = true, ["disabled"] = true })
 print(lib.cf.dump(CONFIG))
+print("---")
 lib.cf.print("/interface/ethernet")
+print("---")
+lib.cf.print("/ip/address")
+print("---")
+lib.cf.set("/interface/ethernet", "ether1", { ["disabled"] = false })
+lib.cf.print("/ip/address")
+
 os.exit(0)
 
 set_cf("/ip/route", nil, { ["dst-address"] = "192.168.95.0/24" })
