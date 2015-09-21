@@ -17,35 +17,37 @@
 ------------------------------------------------------------------------------
 
 --
--- This module provides a simple interface into the iproute2 command set
+-- Serialise a variable (most use for a table)
 --
-local function addr_add(ip, dev)
-	local st = lib.run.execute("/sbin/ip", {"addr", "add", ip, "dev", dev }, nil, nil)
-	return (st == 0)
+function serialise(t)
+	local rc
+
+	if type(t) == "table" then
+		rc = "{"
+		for k,v in pairs(t) do
+			rc = rc .. ("["..serialise(k).."]="..serialise(v)..",")
+		end
+		return rc .. "}"
+	elseif type(t) == "string" then
+		return string.format('%q', t)
+	else
+		return tostring(t)
+	end
 end
 
-local function addr_del(ip, dev)
-	local st = lib.run.execute("/sbin/ip", {"addr", "del", ip, "dev", dev }, nil, nil)
-	return (st == 0)
+--
+-- Unserialise (just means executing the code)
+--
+function unserialise(v)
+	return load("return "..v)()
 end
 
-local function link_set(dev, ...)
-	local st = lib.run.execute("/sbin/ip", {"link", "set", "dev", dev, ...})
-	return (st == 0)
-end
+
+
 
 
 return {
-	["addr"] = {
-		["add"] = addr_add,
-		["del"] = addr_del,
-	},
-	["route"] = {
-	},
-	["link"] = {
-		["set"] = link_set,
-	},
+	serialise = serialise,
+	unserialise = unserialise,
 }
-
-
 

@@ -21,69 +21,93 @@
 --
 -- Stop address ... just remove the address from the interface
 --
-local function stop_address(path, ci)
+local function stop_dhcp(path, ci)
 	local dev = core.interface.lookup(ci.interface)
 
-	lib.ip.addr.del(ci.address, dev)
 end
 
 --
 -- Start address ... just add the address to the interface
 --
-local function start_address(path, ci)
+local function start_dhcp(path, ci)
+	local uniq = ci._uniq
 	local dev = core.interface.lookup(ci.interface)
+	local args = { 	"--interface", dev,
+					"--script", "/opentik/dhc",
+					"--release",
+					"--foreground",
+				}
+	local pid = lib.run.background("/sbin/udhcpc", args)
+	print("PID is "..pid)
+	CONFIG[path].live[uniq]._pid = pid
 
-	lib.ip.addr.add(ci.address, dev)
+	print(lib.cf.dump(CONFIG[path]))
 end
 
 --
+-- DHCP Event ... called when we get an address
+--
+local function event_add_lease(e)
+	print("Called with event add lease")
+	print(lib.cf.dump(e))
+end
+
+
 --
 --
-lib.cf.register("/ip/address", {
+--
+lib.cf.register("/ip/dhcp-client", {
 	["fields"] = {
-		["address"] = { 
-			default="",
+		["add-default-route"] = { 
+			default = true,
 		},
-		["interface"] = { 	
-			readonly = true, 
-			default = ""
-		 },
-		["disabled"] = { 
-			default = false,
-			prep = false,
-		},
-		["netmask"] = { 
-			default = "0.0.0.0",
-		},
-		["network"] = { 
-			default = "0.0.0.0",
-			prep = false,
-		},
-		["actual-interface"] = {
+		["client-id"] = {
 			default = "",
 		},
-		["uniq"] = {
-			uniq = function(_, ci) return string.format("%s@%s", ci.address, ci.interface) end,
+		["default-route-distance"] = {
+			default = "",
+		},
+		["disabled"] = { 
+			default = true,
+			prep = false,
+		},
+		["host-name"] = {
+			default = "",
+		},
+		["interface"] = { 	
+			default = "",
+			uniq = true,
+		 },
+		["use-peer-dns"] = { 
+			default = true,
+		},
+		["use-peer-ntp"] = { 
+			default = true,
 		},
 	},
 
 	["dependencies"] = {
-		["interface"] = { path = "/interface/ethernet", needrunning = false },
+		["interface"] = { path = "/interface/ethernet", needrunning = true },
 	},
 	
 	["flags"] = {
 		{ name = "disabled", field = "disabled", flag = "X", pos = 1 },
 		{ name = "invalid", field = "_invalid", flag = "I", pos = 1 },
-		{ name = "dynamic", field = "_dynamic", flag = "D", pos = 1 },
 	},
 
 	["options"] = {
 		["ci-post-process"] = nil,
-		["stop"] = stop_address,
-		["start"] = start_address,
+		["stop"] = stop_dhcp,
+		["start"] = start_dhcp,
 		["can-delete"] = true,
 		["can-disable"] = true,
-		["field-order"] = { "address", "network", "interface", "actual-interface" }
+		["field-order"] = { "interface", "add-default-route", "use-peer-dns", "use-peer-ntp",
+								"client-id", "host-name" },
 	},
+
+	["events"] = {
+		["add-lease"] = event_add_lease,
+	},
+
 })
 

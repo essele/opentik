@@ -96,9 +96,13 @@ local function dependency_list(path, ci)
 	local rc = {}
 
 	if type(deps) == "table" then
-		for field, dpath in pairs(deps) do
+		for field, dep in pairs(deps) do
 			local duniq = ci[field]
-			rc[field] = { path=dpath, uniq=duniq }
+			rc[field] = { path=dep.path, uniq=duniq, needrunning=dep.needrunning }
+
+--		for field, dpath in pairs(deps) do
+--			local duniq = ci[field]
+--			rc[field] = { path=dpath, uniq=duniq }
 		end
 		return rc
 	elseif type(deps) == "function" then

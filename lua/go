@@ -50,6 +50,12 @@ lib.cf.print("/ip/address")
 --lib.cf.set("/ip/address", uu, { ["disabled"] = true })
 lib.cf.set("/ip/address", uu, { ["address"] = "5.5.5.6/24", ["disabled"] = false })
 lib.cf.set("/interface/ethernet", "ether1", { ["mtu"] = 1450 })
+lib.cf.set("/ip/dhcp-client", nil, { ["interface"] = "ether1", ["disabled"] = false })
+
+lib.event.init()
+while true do
+	lib.event.poll()
+end
 
 os.exit(0)
 
