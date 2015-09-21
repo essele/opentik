@@ -513,6 +513,7 @@ local function cf_register(path, config)
 	config.live = {}
 	config.dependents = {}
 	config.options = config.options or {}
+	config.events = config.events or {}
 
 	-- TODO: some sanity checks to ensure things won't break later
 	--

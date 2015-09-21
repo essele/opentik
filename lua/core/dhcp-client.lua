@@ -22,24 +22,31 @@
 -- Stop address ... just remove the address from the interface
 --
 local function stop_dhcp(path, ci)
-	local dev = core.interface.lookup(ci.interface)
+	local base = CONFIG[path]
+	local uniq = ci._uniq
+	local live = base.live[uniq]
+	local dev = core.interface.lookupbyname(ci.interface)
 
+	if live._pid then
+		print("would kill " .. live._pid)
+	end
 end
 
 --
 -- Start address ... just add the address to the interface
 --
 local function start_dhcp(path, ci)
+	local base = CONFIG[path]
 	local uniq = ci._uniq
-	local dev = core.interface.lookup(ci.interface)
+	local live = base.live[uniq]
+	local dev = core.interface.lookupbyname(ci.interface)
 	local args = { 	"--interface", dev,
-					"--script", "/opentik/dhc",
+					"--script", "/opentik/scripts/dhcp-lease.lua",
 					"--release",
-					"--foreground",
-				}
+					"--foreground" }
 	local pid = lib.run.background("/sbin/udhcpc", args)
 	print("PID is "..pid)
-	CONFIG[path].live[uniq]._pid = pid
+	live._pid = pid
 
 	print(lib.cf.dump(CONFIG[path]))
 end
@@ -48,10 +55,53 @@ end
 -- DHCP Event ... called when we get an address
 --
 local function event_add_lease(e)
+	local base = CONFIG["/ip/dhcp-client"]
+	local interface = core.interface.lookupbydev(e.interface)
+	local live = base.live[interface]
+
 	print("Called with event add lease")
-	print(lib.cf.dump(e))
+
+	--
+	-- Copy the relevant information into the live structure
+	--
+	live["address"] = e.ip .. "/" .. e.mask
+	live["dhcp-server"] = e.serverid
+	live["gateway"] = e.router and e.router[1]
+	live["primary-dns"] = e.dns and e.dns[1]
+	live["secondary-dns"] = e.dns and e.dns[2]
+	live["primary-ntp"] = e.ntpsrv and e.ntpsrv[1]
+	live["secondary-ntp"] = e.ntpsrv and e.ntpsrv[2]
+	live["status"] = "bound"
+
+	--
+	-- Add the ip address to the interface
+	--
+	lib.ip.addr.add(live.address, e.interface)
+
+
+	print(lib.cf.dump(live))
+
+	-- TODO: dns
+	-- TODO: ntp
+	-- TODO: router
 end
 
+--
+-- DHCP Event ... del-lease called before we start and then also
+-- if we lose the lease
+--
+local function event_del_lease(e)
+	local base = CONFIG["/ip/dhcp-client"]
+	local interface = core.interface.lookupbydev(e.interface)
+	local live = base.live[interface]
+
+	print("Called with event del lease")
+	print(lib.cf.dump(e))
+
+	if live.address then
+		lib.ip.addr.del(live.address, e.interface)
+	end
+end
 
 --
 --
@@ -107,6 +157,7 @@ lib.cf.register("/ip/dhcp-client", {
 
 	["events"] = {
 		["add-lease"] = event_add_lease,
+		["del-lease"] = event_del_lease,
 	},
 
 })

@@ -29,6 +29,11 @@
 local searchlist = { "/opentik", "." }
 
 --
+-- Ensure our path is right for our posix lib
+--
+package.cpath = "/home/essele/dev/opentik/support/lib/?.so;" .. package.cpath
+
+--
 -- An __index function that allows references to table values to cause the
 -- lib to be loaded from the relevant directory.
 --

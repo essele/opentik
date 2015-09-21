@@ -33,7 +33,7 @@ local function stdin_read(fd)
 end
 
 local fds = {
-	[1] = { events = {IN=true}, callback=stdin_read },
+--	[1] = { events = {IN=true}, callback=stdin_read },
 
 }
 
@@ -50,7 +50,16 @@ local function event_recv(fd)
 	print("Path = "..event.path)
     print("Got packet "..#raw.." event="..event.event)
 
-	local func = CONFIG[event.path].events[event.event]
+	local base = CONFIG[event.path]
+	if not base then
+		print("Got event for non-existent path: "..event.path)
+		return
+	end
+	local func = base.events[event.event]
+	if not func then
+		print("Got unconfigured event: "..event.path.." "..event.event)
+		return
+	end
 	func(event)
 end
 
@@ -77,6 +86,14 @@ local function init()
 
 end
 
+--
+-- Send an event
+--
+local function send(ev)
+	local evs = posix.sys.socket.socket(posix.sys.socket.AF_UNIX, posix.sys.socket.SOCK_DGRAM, 0)
+	posix.sys.socket.sendto(evs, lib.util.serialise(ev), { family = posix.sys.socket.AF_UNIX, path = SOCK_NAME })
+	posix.unistd.close(evs)
+end
 
 
 --
@@ -105,6 +122,7 @@ end
 return {
 	init = init,
 	poll = poll,
+	send = send,
 }
 
 

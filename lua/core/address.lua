@@ -22,7 +22,7 @@
 -- Stop address ... just remove the address from the interface
 --
 local function stop_address(path, ci)
-	local dev = core.interface.lookup(ci.interface)
+	local dev = core.interface.lookupbyname(ci.interface)
 
 	lib.ip.addr.del(ci.address, dev)
 end
@@ -31,7 +31,7 @@ end
 -- Start address ... just add the address to the interface
 --
 local function start_address(path, ci)
-	local dev = core.interface.lookup(ci.interface)
+	local dev = core.interface.lookupbyname(ci.interface)
 
 	lib.ip.addr.add(ci.address, dev)
 end

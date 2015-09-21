@@ -1,7 +1,7 @@
 #!/bin/sh
 
 if [ -x ../support/bin/lua ]; then
-	export LUA_CPATH="../support/lib/?.so"
+#	export LUA_CPATH="../support/lib/?.so"
 	../support/bin/lua go
 else
 	./go

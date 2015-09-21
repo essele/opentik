@@ -24,24 +24,10 @@ _ = core.interface
 
 
 --
--- Maintain the lookup for system interface in the /interface (_if_lookup) section
--- so that we can map from interface events back to the correct item in the cf.
---
-local function ether_ci_postprocess(path, ci, going)
-	local uniq = ci._uniq
-	local base = CONFIG["/interface"]
-	local map = (not going and { ["path"] = path, ["uniq"] = uniq }) or nil
-
-	base._if_lookup = base._if_lookup or {}
-	base._if_lookup[ci._system_name] = map
-end
-
-
---
 -- Start the interface
 --
 local function ether_start(path, ci)
-	local dev = core.interface.lookup(ci.name)
+	local dev = core.interface.lookupbyname(ci.name)
 
 	lib.ip.link.set(dev, "mtu", ci.mtu, "up")
 end
@@ -50,7 +36,7 @@ end
 -- Stop the interface
 --
 local function ether_stop(path, ci)
-	local dev = core.interface.lookup(ci.name)
+	local dev = core.interface.lookupbyname(ci.name)
 
 	lib.ip.link.set(dev, "down")
 end

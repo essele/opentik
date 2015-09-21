@@ -35,6 +35,7 @@ function serialise(t)
 	end
 end
 
+
 --
 -- Unserialise (just means executing the code)
 --
@@ -43,11 +44,23 @@ function unserialise(v)
 end
 
 
+--
+-- Split a string into a table
+--
+local function split(str, sep)
+	local rc = {}
+	for tok in str:gmatch("([^"..sep.."]+)") do
+		table.insert(rc, tok)
+	end
+	return rc
+end
+
 
 
 
 return {
 	serialise = serialise,
 	unserialise = unserialise,
+	split = split,
 }
 
