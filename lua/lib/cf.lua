@@ -175,8 +175,9 @@ local function random_key(t, prefix)
 
 	local function randomstring(x)
 		local rs = {}
-		for i=1, x do rs[i] = string.char(string.byte('a') + math.random(0,25)) end
-		return table.concat(rs)
+--		for i=1, x do rs[i] = string.char(string.byte('a') + math.random(0,25)) end
+		for i=1, x/2 do rs[i] = string.format("%02x", math.random(0,255)) end
+		return "0x" .. table.concat(rs)
 	end
 
 	repeat k = (prefix or "") .. randomstring(8) until not t[k]
@@ -500,6 +501,32 @@ local function cf_set(path, olduniq, items)
 	return newuniq
 end
 
+--
+-- Support the addition of dynamic entries into the live data set, we will create
+-- a uniq value if one isn't provided.
+--
+-- If ci is empty then this is a remove
+--
+local function live_set(path, uniq, ci)
+	-- TODO: validation!
+	--
+	if not ci then
+		-- TODO: uniq not set?
+		CONFIG[path].live[uniq] = nil
+		return
+	end
+
+	if not uniq then 	
+		uniq = build_uniq(path, ci)
+		ci._uniq = uniq
+	end
+	-- TODO: already exists?
+	
+	-- Support defaults
+	set_defaults_metatable(path, ci)
+	CONFIG[path].live[uniq] = ci
+end
+
 
 --
 -- Allow the registration of config sections. This basically adds the structure
@@ -597,6 +624,7 @@ end
 
 return {
 	set = cf_set,
+	live = live_set,
 	register = cf_register,
 	dump = cf_dump,
 	print = cf_print,

@@ -19,7 +19,8 @@
 
 
 --
--- Stop address ... just remove the address from the interface
+-- Stop dhcp ... kill the process if it's running, that will cause the
+-- address to be removed (if we have a valid lease)
 --
 local function stop_dhcp(path, ci)
 	local base = CONFIG[path]
@@ -29,11 +30,14 @@ local function stop_dhcp(path, ci)
 
 	if live._pid then
 		print("would kill " .. live._pid)
+		live._pid = nil
 	end
+	live["status"] = "stopped"
 end
 
 --
--- Start address ... just add the address to the interface
+-- Start dhcp ... start the executable and save the pid into the live
+-- structure
 --
 local function start_dhcp(path, ci)
 	local base = CONFIG[path]
@@ -52,7 +56,8 @@ local function start_dhcp(path, ci)
 end
 
 --
--- DHCP Event ... called when we get an address
+-- DHCP Event ... called when we get an address, we update the live
+-- structure, and then add the ipaddress etc.
 --
 local function event_add_lease(e)
 	local base = CONFIG["/ip/dhcp-client"]
@@ -88,7 +93,8 @@ end
 
 --
 -- DHCP Event ... del-lease called before we start and then also
--- if we lose the lease
+-- if we lose the lease. Ensure the live structure is clean and
+-- remove the address if we have one.
 --
 local function event_del_lease(e)
 	local base = CONFIG["/ip/dhcp-client"]
@@ -100,6 +106,25 @@ local function event_del_lease(e)
 
 	if live.address then
 		lib.ip.addr.del(live.address, e.interface)
+	end
+
+	live["address"] = nil
+	live["dhcp-server"] = nil
+	live["gateway"] = nil
+	live["primary-dns"] = nil
+	live["secondary-dns"] = nil
+	live["primary-ntp"] = nil
+	live["secondary-ntp"] = nil
+
+	--
+	-- TODO: If we are still running then what status is this
+	-- really ... probably a request.
+	--
+	-- Could be a release, so probably need to track activity
+	-- somewhere so we can do better with this (or set it in the previous place)
+	--
+	if live._pid then
+		live["status"] = "requesting"
 	end
 end
 
