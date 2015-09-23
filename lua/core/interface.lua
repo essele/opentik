@@ -35,15 +35,15 @@ end
 -- interface given the interface name
 --
 local function lookupbyname(name)
-	-- TODO: catch missing items
-	print("LOOKUP for "..name)
-	print("FOUND: "..CONFIG["/interface"].cf[name]._system_name)
-	return CONFIG["/interface"].cf[name]._system_name
+	local map = CONFIG["/interface"].cf[name]
+	if not map then return "unknown" end
+	return map._system_name
 end
 
 local function lookupbydev(dev)
-	print("LOOKUP for "..dev)
-	return CONFIG["/interface"]._if_lookup[dev].uniq
+	local map = CONFIG["/interface"]._if_lookup[dev]
+	if not map then return "unknown" end
+	return map.uniq
 end
 
 --

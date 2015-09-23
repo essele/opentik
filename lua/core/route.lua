@@ -81,12 +81,17 @@ local function system_routes()
 			if entry.proto == "kernel" then
 				entry._connected = true
 				entry.distance = 0
+			else
+				entry.distance = 256
 			end
 
 			-- clean out the bits we don't need
 			entry.proto = nil
 			entry.scope = nil
 			entry.metric = nil
+
+			-- map in our interface names
+			if entry["dev"] then entry["dev"] = core.interface.lookupbydev(entry["dev"]) end
 
 			-- set the flags for the special cases
 			if entry.type == "prohibit" or entry.type == "blackhole" or entry.type == "unreachable" then
@@ -132,8 +137,9 @@ local function route_list()
 		else
 			local dest = string.format("%s@%s", rt["dst-address"], rt["routing-mark"])
 			local sysdist = (system[dest] and system[dest].distance) or 256
-			local prevdist = (dests[dest] and dests[dest].distnace) or 256
+			local prevdist = (dests[dest] and dests[dest].distance) or 256
 			rt.active = nil
+			if base.cf[uniq] then rt.static = true end
 
 			if rt["distance"] < sysdist and rt["distance"] < prevdist then
 				dests[dest] = rt
@@ -154,9 +160,11 @@ local function route_list()
 		elseif sysdest.type ~= rt.type or sysdest.gateway ~= rt.gateway then
 			print("need to change del/add")
 			-- TODO: copy status over
+			rt["gateway-status"] = sysdest["gateway-status"]
 		else
 			print("route seems to be there ok")
 			-- TODO: copy status over
+			rt["gateway-status"] = sysdest["gateway-status"]
 		end
 		rt.active = true		-- mark route active
 		system[dest] = nil		-- remove from system list
@@ -188,12 +196,11 @@ lib.cf.register("/ip/route", {
 		["type"] = { default = "unicast" },
 		["pref-src"] = { default = "" },
 		["gateway"] = { default = "" },
-		["distance"] = { default = 5 },
+		["distance"] = { default = 1 },
 		["disabled"] = { default = false },
 	},
 	["dependencies"] = route_dependencies,
 
-	-- TODO: get flags right
 	["flags"] = {
 		{ name = "disabled", field = "disabled", flag = "X", pos = 1 },
 		{ name = "active", field = "active", flag = "A", pos = 1 },
@@ -211,7 +218,8 @@ lib.cf.register("/ip/route", {
 		["start"] = start_route,
 		["can-delete"] = true,
 		["can-disable"] = true,
-		["field-order"] = { "dst-address", "gateway", "routing-mark", "scope", "type", "pref-src" },
+		["field-order"] = { "dst-address", "gateway", "routing-mark", "scope", "type", "pref-src",
+							"distance" },
 	},
 })
 
