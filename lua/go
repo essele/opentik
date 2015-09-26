@@ -36,7 +36,7 @@ load_modules("./core")
 --
 local uu = lib.cf.set("/ip/address", nil, { ["address"] = "1.2.3.4/24", ["interface"] = "ether1" })
 
-lib.cf.set("/interface/ethernet", "ether1", { ["disabled"] = true })
+lib.cf.set("/interface/ethernet", "ether1", { ["disabled"] = false })
 lib.cf.set("/ip/address", nil, { ["address"] = "3.0.0.1/24", ["interface"] = "ether2" })
 lib.cf.set("/ip/route", nil, { ["dst-address"] = "0.0.0.0/0", ["gateway"] = "3.0.0.254", ["distance"] = 10 })
 lib.cf.set("/ip/route", nil, { ["dst-address"] = "0.0.0.0/0", ["gateway"] = "4.0.0.1", ["distance"] = 20 })
@@ -45,7 +45,6 @@ lib.cf.live("/ip/route", nil, { ["dst-address"] = "192.168.95.0/24", ["gateway"]
 core.route.route_list()
 lib.cf.print("/ip/route")
 
-os.exit(0)
 print("---")
 --lib.cf.print("/interface/ethernet")
 print("---")
@@ -60,6 +59,7 @@ lib.cf.set("/ip/dhcp-client", nil, { ["interface"] = "ether1", ["disabled"] = fa
 print(lib.cf.dump(CONFIG))
 
 lib.event.init()
+lib.cli.init()
 while true do
 	lib.event.poll()
 end

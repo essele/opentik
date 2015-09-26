@@ -42,7 +42,8 @@ local fds = {
 -- The callback used when we receive an external event, we need to look it
 -- up in the config and call the relevant function
 --
-local function event_recv(fd)
+local function event_recv(fdt)
+	local fd = fdt.fds
     local raw = posix.sys.socket.recv(fd, 1024)
 	print("RAW="..raw)
     local event = lib.util.unserialise(raw)
@@ -63,7 +64,6 @@ local function event_recv(fd)
 	func(event)
 end
 
-
 --
 -- Initialise the key stuff for the event system
 --
@@ -78,12 +78,21 @@ local function init()
 	posix.unistd.unlink(SOCK_NAME)
 	rc = posix.sys.socket.bind(evs, { family = posix.sys.socket.AF_UNIX, path = SOCK_NAME })
 	assert(rc == 0, "unable to bind event socket")
---	rc = posix.sys.socket.listen(evs, 5)
---	assert(rc == 0, "unable to listen on event socket")
+	fds[evs] = { fd = evs, events = { IN = true }, callback = event_recv }
+end
 
-	fds[evs] = { events = { IN = true }, callback = event_recv }
-
-
+--
+-- Register an additional filehandle to listen on
+--
+local function add_fd(fd, callback, fields)
+	local table = { fd = fd, events = { IN = true }, callback = callback }
+	for k,v in pairs(fields or {}) do
+		table[k] = v
+	end
+	fds[fd] = table
+end
+local function remove_fd(fd)
+	fds[fd] = nil
 end
 
 --
@@ -110,9 +119,9 @@ local function poll()
 
 	-- now find any handles ready for processing
 	for i,fd in pairs(fds) do
-		if fd.revents.IN then
+		if fd.revents.IN or fd.revents.OUT then
 			print("Got read on "..i)
-			fd.callback(i)
+			fd.callback(fd)
 		end
 	end
 end
@@ -123,6 +132,8 @@ return {
 	init = init,
 	poll = poll,
 	send = send,
+	add_fd = add_fd,
+	remove_fd = remove_fd,
 }
 
 
