@@ -10,7 +10,7 @@ all:
 # Build lua from the support tree and link the binary into the support/bin
 # directory
 #
-lua:	support/bin/lua support/lib/posix.so
+lua:	support/bin/lua support/lib/posix.so support/lib/lpeg.so
 
 support/bin/lua:
 	make -C support/lua-5.3.1 linux && ln -s ../lua-5.3.1/src/lua support/bin/lua
@@ -21,6 +21,10 @@ export LUA_INCLUDE = -I$(shell pwd)/support/lua-5.3.1/src
 support/lib/posix.so: support/bin/lua
 	(cd support/luaposix-release-v33.3.1 && ./configure && make) \
 		&& ln -s ../luaposix-release-v33.3.1/ext/posix/.libs/posix.so support/lib/posix.so
+
+support/lib/lpeg.so: support/bin/lua
+	(cd support/lpeg-0.12.2 && make -f makefile linux) \
+		&& ln -s ../lpeg-0.12.2/lpeg.so support/lib/lpeg.so
 
 #
 # QEMU
