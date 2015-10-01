@@ -39,15 +39,67 @@ local function size_decode(char)
 	end
 end
 
+--
+-- Given a size, encode the length into a string
+--
+local function size_encode(len)
+	if len < 0x80 then
+		return string.pack(">I1", len)
+	elseif len < 0x4000 then
+		return string.pack(">I2", len|0x8000)
+	elseif len < 0x200000 then
+		return string.pack(">I3", len|0xC00000)
+	elseif len < 0x10000000 then
+		return string.pack(">I4", len|0xE0000000)
+	else
+		return string.pack(">I1I4", 0xF0, len)
+	end
+end
 
 --
--- 
+-- Send a reply over the cli socket. The length will need to be
+-- encoded and then the output queued
 --
-local function cli_callback(fdt)
+local function send(fdt, data)
+	local enclen = size_encode(data:len())
+	table.insert(fdt.outbuf, enclen .. data)
+	fdt.events.OUT = true	
+end
+
+
+--
+-- Called when we have data to read or write, we buffer up as needed,
+-- decode sizes and call the main callback for reads.
+--
+local function io_callback(fdt)
 	local fd = fdt.fd
 
 	print("Got cli callback " .. fd)
 
+	--
+	-- For output we just send each chunk of data in turn
+	--
+	if fdt.revents.OUT then
+		local data = fdt.outbuf[1]
+		local size = posix.unistd.write(fd, data)
+		if not size then
+			print("error writing")
+			posix.unistd.close(fd)
+			lib.event.remove_fd(fd)
+			return
+		end
+		data = data:sub(size+1)
+		if data:len() == 0 then
+			table.remove(fdt.outbuf, 1)
+			if #fdt.outbuf == 0 then fdt.events.OUT = nil end
+		else
+			fdt.outbuf[1] = data
+		end
+	end
+
+	--
+	-- Input is more complex because we might get partial data
+	--
 	if fdt.revents.IN then
 
 		if fdt.want > 0 then
@@ -66,15 +118,14 @@ local function cli_callback(fdt)
 				return
 			end
 			fdt.want = fdt.want - size
-			table.insert(fdt.buf, data)
+			table.insert(fdt.inbuf, data)
 			if fdt.want > 0 then return end
 		end
 
 		--
 		-- We have what we want so far...
 		--
-		data = table.concat(fdt.buf)
-		print("Have "..data:len().." bytes")
+		data = table.concat(fdt.inbuf)
 
 		--
 		-- If it's just the first byte, then decode and work out
@@ -85,7 +136,7 @@ local function cli_callback(fdt)
 			fdt.want, byte, fdt.template = size_decode(data)
 			if fdt.want > 0 then
 				-- Put first byte back
-				fdt.buf = { string.pack(">I1", byte ) }
+				fdt.inbuf = { string.pack(">I1", byte ) }
 				return
 			end
 		end
@@ -97,35 +148,20 @@ local function cli_callback(fdt)
 		if not fdt.clisize then
 			fdt.clisize = string.unpack(fdt.template, data)
 			print("Got size: " .. fdt.clisize)
-			fdt.buf = {}
-			fdt.have = 0
+			fdt.inbuf = {}
 			fdt.want = fdt.clisize
 			return
 		end
 
 		--
-		-- Here we actually have the cli data
+		-- Here we actually have the cli data, so setup for another read
+		-- and call the cli function
 		--
 		fdt.template = nil
 		fdt.clisize = nil
-		fdt.buf = {}
+		fdt.inbuf = {}
 		fdt.want = 1
 		print("Got data "..data)
-	end
-
-	if fdt.revents.OUT then
-		--
-		-- If we have some data then we can write as much as possible
-		--
-		-- TODO: use a table
-		local n = posix.unistd.write(fd, fdt.out)
-		print("written bytes " .. n)
-	
-		fdt.outbuf = fdt.outbuf:sub(n+1)
-		if fdt.outbuf:len() == 0 then
-			fdt.outbuf = nil
-			fdt.events.OUT = nil
-		end
 	end
 end
 
@@ -135,23 +171,8 @@ end
 --
 local function cli_accept(fdt)
 	local fd = fdt.fd
-
 	local newfd = posix.sys.socket.accept(fd)
-	print("Got new fd="..newfd)
-
-	--
-	-- Do i need to make this non blocking or will it inherit?
-	--
-
-	lib.event.add_fd(newfd, cli_callback, { want = 1, buf = {} })
-
---[[
-	fds[newfd] = { fd = newfd, 
-					events = { IN = true }, revents = {}, 
-					buf = {},
-					want = 1,
-					callback = cli_callback }
-]]--
+	lib.event.add_fd(newfd, io_callback, { want = 1, inbuf = {}, outbuf = {} })
 end
 
 --
@@ -189,6 +210,8 @@ end
 
 return {
 	init = init,
+	size_encode = size_encode,
+	size_decode = size_decode,
 }
 
 

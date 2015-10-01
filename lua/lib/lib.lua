@@ -26,10 +26,11 @@
 --
 -- ==============================================================================
 
-local searchlist = { "/opentik", "." }
+local libsearch = "/opentik/%/?.lua;/opentik/%/?.so;./%/?.lua;./%/?.so"
 
 --
 -- Ensure our path is right for our posix lib
+-- (this is mainly for testing)
 --
 package.cpath = "/home/essele/dev/opentik/support/lib/?.so;" .. package.cpath
 
@@ -38,21 +39,23 @@ package.cpath = "/home/essele/dev/opentik/support/lib/?.so;" .. package.cpath
 -- lib to be loaded from the relevant directory.
 --
 local function set_loader(table, dir)
+	local searchpath = libsearch:gsub("%%", dir)
+
 	setmetatable(table, { __index = function(v, name)
 		local file, filename
 
 		print("Autoloading module: "..name.." ["..dir.."]")
-		for _,p in pairs(searchlist) do
-			filename = p .. "/" .. dir .. "/"..name..".lua"
+		filename = package.searchpath(name, searchpath)
+		assert(filename, "module not found: "..name.." ["..dir.."]")
+		if filename:sub(-3) == "lua" then
 			file = io.open(filename, "rb")
-			if file then break end
-		end
-			
-		if file then
+			assert(file, "cannot open module: "..filename)
 			rawset(v, name, assert(load(assert(file:read("*a")), filename))() or {})
 			return rawget(v, name)
 		else
-			assert(false, "module not found: "..filename)
+			local funcname = "luaopen_"..name
+			rawset(v, name, assert(package.loadlib(filename, funcname))() or {})
+			return rawget(v, name)
 		end
 	end })
 	return table
@@ -86,6 +89,7 @@ end
 --
 lib = set_loader({}, "lib")
 core = set_loader({}, "core")
+c = set_loader({}, "c")
 
 --
 -- Setup autoloading for posix

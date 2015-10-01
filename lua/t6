@@ -1,0 +1,76 @@
+#!/usr/bin/lua
+
+-- LPEG test
+
+lpeg = require("lpeg")
+
+local P, S, R, V, C, Cp, Cc, Ct = lpeg.P, lpeg.S, lpeg.R, lpeg.V, lpeg.C, lpeg.Cp, lpeg.Cc, lpeg.Ct
+
+local function token(id, patt) return Ct(Cc(id) * Cp() * C(patt) * Cp()) end
+
+local function dump(t, indent)
+    indent = indent or 0
+    local space = string.rep(" ", indent)
+    local rc = ""
+
+    if type(t) == "table" then
+        rc = rc .. "{\n"
+        for k,v in pairs(t) do
+            rc = rc .. space .. "   " .. k .. " = " .. dump(v, indent+3) .. "\n"
+        end
+        rc = rc .. space .. "}"
+    else
+        rc = tostring(t)
+    end
+    return rc
+end
+
+
+
+local slash = token('slash', P"/")
+
+local colon = token('colon', P":")
+
+local equals = token('equals', P"=")
+
+local pling = token('pling', P"!")
+
+local plainvalue = (R"az" + R"AZ" + R"09" + S"+-.")^1
+local stringvalue = P '"' * ((1 - S '"\r\n\f\\') + (P '\\' * 1)) ^ 0 * '"'
+local value = token('value', plainvalue + stringvalue)
+
+local word = token('word', R("az")^1 * (R"az" + S"-")^0)
+
+local setting = token('setting', word * equals * value)
+local notsetting = token('notsetting', pling * word)
+
+
+
+--local command = token('command', P"set" + P"pring")
+
+--local pathelem = token('pathelem', (R("az")^1 * (R"az" + S"-")^0) - command)
+
+
+
+local whitespace = S('\r\n\f\t ')^1
+
+--local cmdline = slash^0 * whitespace^0 * pathelem^0 * whitespace^0 * command
+
+
+local number = token('number', R('09')^1)
+
+
+--local subclause = token('subclause', P'[' * (whitespace + slash + colon + setting + notsetting + word)^1 * P']')
+local subclause = token('subclause', P {
+	"subclause",
+	subclause = P'[' * (whitespace + token('subclause', V"subclause") + slash + colon + setting + notsetting + word)^1 * P']'
+})
+
+local any_token = whitespace + subclause + slash + colon + setting + notsetting + word + token('error', 1)
+
+local table_of_tokens = Ct(any_token ^ 0)
+
+
+local t = lpeg.match(table_of_tokens, "/interface ethernet set [ /bill ok [ /arthur two three ]] fred=hello !mtu bill=\"345 \\\nok\"\nfred joe jack")
+print(dump(t))
+

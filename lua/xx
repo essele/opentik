@@ -1,0 +1,31 @@
+
+
+
+
+
+/ interface ethernet set ether1 name="yes1" !mtu
+
+
+
+path = /
+path = path + "interface"
+path = path + "/ethernet"
+
+set(path, "ether1", { name="yes1", mtu=nil })
+
+
+/ interface ethernet set [ / interface ethernet find name="ether1" ] mtu=1520
+
+
+path = /
+path = path + interface
+path = path + ethernet
+
+push path
+	
+	path = /
+	path = path + interface
+	path = path + ethernet
+	find(path, { name="ether1" }
+	
+

@@ -1,0 +1,28 @@
+#!../support/bin/lua
+
+--package.path = "./lib/?.lua;" .. package.path
+--package.cpath = "../support/lib/?.so;" .. package.cpath
+
+--
+---- Use our library autoloading mechanism
+----
+dofile("lib/lib.lua")
+
+local function send(data)
+    local cli = posix.sys.socket.socket(posix.sys.socket.AF_UNIX, posix.sys.socket.SOCK_STREAM, 0)
+    posix.sys.socket.connect(cli, { family = posix.sys.socket.AF_UNIX, path = "/tmp/opentik.cli" })
+
+	local len = data:len() + 3
+	local enclen = lib.cli.size_encode(len)
+
+	posix.unistd.write(cli, enclen)
+	os.execute("/bin/sleep 5")
+	posix.unistd.write(cli, "abc")
+	os.execute("/bin/sleep 5")
+	posix.unistd.write(cli, data)
+
+end
+
+
+local data = string.rep("abcdefgi", 10)
+send(data)

@@ -9,5 +9,40 @@ package.cpath = "../support/lib/?.so;" .. package.cpath
 dofile("lib/lib.lua")
 
 
-lib.ip.addr.add("1.2.3.4/24", "eth0")
+--lib.ip.addr.add("1.2.3.4/24", "eth0")
+
+template = [[
+	#
+	# DO NOT EDIT
+	#
+	fred={{abc}}
+	new={{def}}
+	{{xxx}}
+]]
+
+
+--lib.file.template("/tmp/xxx", template, { abc = "hello", def = { "one", "two", "three" },
+--							xxx = { "1", "2", "aaa", "aaa", "bbb" }})
+
+
+
+s = posix.sys.socket.socket(posix.sys.socket.AF_UNIX, posix.sys.socket.SOCK_DGRAM, 0)
+
+posix.unistd.unlink("/tmp/opentik.sock")
+laddr = {
+	family = posix.sys.socket.AF_UNIX,
+	path = "/tmp/opentik.sock",
+}	
+
+x = posix.sys.socket.bind(s, laddr)
+
+posix.sys.socket.listen(s, 5)
+
+while(1) do
+	m = posix.sys.socket.recv(s, 1024)
+
+	local mm = lib.util.unserialise(m)
+
+	print("Got packet "..#m.." event="..mm.event)
+end
 

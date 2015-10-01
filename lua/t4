@@ -1,0 +1,21 @@
+#!../support/bin/lua
+
+package.path = "./lib/?.lua;" .. package.path
+package.cpath = "/home/essele/dev/opentik/support/lib/?.so;" .. package.cpath
+
+--
+---- Use our library autoloading mechanism
+----
+dofile("lib/lib.lua")
+
+
+x = string.rep('X', 1000)
+
+--y = {}
+y = ""
+for n = 1,10000 do
+y = y .. x
+--	table.insert(y, x)
+end
+--y = table.concat(y)
+print(#y)

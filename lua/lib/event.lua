@@ -43,13 +43,13 @@ local fds = {
 -- up in the config and call the relevant function
 --
 local function event_recv(fdt)
-	local fd = fdt.fds
-    local raw = posix.sys.socket.recv(fd, 1024)
+	local fd = fdt.fd
+	local raw = posix.sys.socket.recv(fd, 1024)
 	print("RAW="..raw)
-    local event = lib.util.unserialise(raw)
+	local event = lib.util.unserialise(raw)
 
 	print("Path = "..event.path)
-    print("Got packet "..#raw.." event="..event.event)
+	print("Got packet "..#raw.." event="..event.event)
 
 	local base = CONFIG[event.path]
 	if not base then
@@ -85,7 +85,7 @@ end
 -- Register an additional filehandle to listen on
 --
 local function add_fd(fd, callback, fields)
-	local table = { fd = fd, events = { IN = true }, callback = callback }
+	local table = { fd = fd, events = { IN = true }, revents = {}, callback = callback }
 	for k,v in pairs(fields or {}) do
 		table[k] = v
 	end
